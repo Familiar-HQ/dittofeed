@@ -35,6 +35,9 @@ export const JsonResult = <T extends TSchema, E extends TSchema>(
 export const Nullable = <T extends TSchema>(type: T) =>
   Type.Union([type, Type.Null()]);
 
+export const NullableAndOptional = <T extends TSchema>(type: T) =>
+  Type.Union([Type.Null(), Type.Optional(type)]);
+
 export type JSONValue =
   | string
   | number
@@ -1037,8 +1040,8 @@ export const TriggerBroadcastRequest = Type.Object({
 export type TriggerBroadcastRequest = Static<typeof TriggerBroadcastRequest>;
 
 export const UpsertSegmentResource = Type.Intersect([
-  Type.Omit(Type.Partial(SegmentResource), ["id"]),
-  Type.Pick(SegmentResource, ["id"]),
+  Type.Omit(Type.Partial(SegmentResource), ["workspaceId", "name"]),
+  Type.Pick(SegmentResource, ["workspaceId", "name"]),
 ]);
 
 export type UpsertSegmentResource = Static<typeof UpsertSegmentResource>;
@@ -1082,8 +1085,8 @@ export const GetEventsRequest = Type.Object({
   workspaceId: Type.String(),
   searchTerm: Type.Optional(Type.String()),
   userId: Type.Optional(UserId),
-  offset: Type.Number(),
-  limit: Type.Number(),
+  offset: Type.Optional(Type.Number()),
+  limit: Type.Optional(Type.Number()),
   startDate: Type.Optional(Type.Number()),
   endDate: Type.Optional(Type.Number()),
 });
@@ -1394,9 +1397,9 @@ export type NarrowedMessageTemplateResource<
 };
 
 export const UpsertMessageTemplateResource = Type.Object({
-  workspaceId: Type.Optional(Type.String()),
-  id: Type.String(),
-  name: Type.Optional(Type.String()),
+  workspaceId: Type.String(),
+  id: Type.Optional(Type.String()),
+  name: Type.String(),
   definition: Type.Optional(MessageTemplateResourceDefinition),
   draft: Type.Optional(Nullable(MessageTemplateResourceDraft)),
 });
@@ -1445,7 +1448,7 @@ export type GetSegmentsResponse = Static<typeof GetSegmentsResponse>;
 
 export const ResetMessageTemplateResource = Type.Object({
   workspaceId: Type.String(),
-  id: Type.String(),
+  name: Type.String(),
   journeyMetadata: Type.Optional(
     Type.Object({
       journeyId: Type.String(),
@@ -1632,6 +1635,13 @@ export type DeepPartial<T> = T extends object
     }
   : T;
 
+export const WorkspaceStatusDb = Type.Union([
+  Type.Literal("Active"),
+  Type.Literal("Tombstoned"),
+]);
+
+export type WorkspaceStatusDb = Static<typeof WorkspaceStatusDb>;
+
 export const WorkspaceResource = Type.Object({
   id: Type.String(),
   name: Type.String(),
@@ -1647,6 +1657,19 @@ export const DefaultEmailProviderResource = Type.Object({
 
 export type DefaultEmailProviderResource = Static<
   typeof DefaultEmailProviderResource
+>;
+
+export const UpsertDefaultEmailProviderRequest = Type.Union([
+  DefaultEmailProviderResource,
+  Type.Object({
+    workspaceId: Type.String(),
+    emailProvider: Type.String(),
+    fromAddress: Nullable(Type.String()),
+  }),
+]);
+
+export type UpsertDefaultEmailProviderRequest = Static<
+  typeof UpsertDefaultEmailProviderRequest
 >;
 
 export const JourneyResourceStatusEnum = {
@@ -2008,7 +2031,7 @@ export const UpsertJourneyResource = Type.Composite([
     ),
   ),
   Type.Object({
-    id: Type.String(),
+    name: Type.String(),
     workspaceId: Type.String(),
     draft: Type.Optional(Nullable(JourneyDraft)),
   }),
@@ -2067,8 +2090,8 @@ export type SavedUserPropertyResource = Static<
 >;
 
 export const UpsertUserPropertyResource = Type.Intersect([
-  Type.Omit(Type.Partial(UserPropertyResource), ["id", "name"]),
-  Type.Pick(UserPropertyResource, ["id", "name"]),
+  Type.Omit(Type.Partial(UserPropertyResource), ["name"]),
+  Type.Pick(UserPropertyResource, ["name", "workspaceId"]),
 ]);
 
 export type UpsertUserPropertyResource = Static<
@@ -3071,15 +3094,6 @@ export const PersistedSmsProvider = Type.Union([
 
 export type PersistedSmsProvider = Static<typeof PersistedSmsProvider>;
 
-export const UpsertSmsProviderRequest = Type.Object({
-  workspaceId: Type.String(),
-  setDefault: Type.Optional(Type.Boolean()),
-  type: Type.Optional(Type.Enum(SmsProviderType)),
-  secret: Type.Omit(SmsProviderSecret, ["type"]),
-});
-
-export type UpsertSmsProviderRequest = Static<typeof UpsertSmsProviderRequest>;
-
 export const DefaultSmsProviderResource = Type.Object({
   workspaceId: Type.String(),
   smsProviderId: Type.String(),
@@ -3933,6 +3947,7 @@ export type GetUserSubscriptionsResponse = Static<
 
 export enum CreateWorkspaceErrorType {
   WorkspaceAlreadyExists = "WorkspaceAlreadyExists",
+  WorkspaceNameViolation = "WorkspaceNameViolation",
   InvalidDomain = "InvalidDomain",
 }
 
@@ -3942,6 +3957,15 @@ export const CreateWorkspaceAlreadyExistsError = Type.Object({
 
 export type CreateWorkspaceAlreadyExistsError = Static<
   typeof CreateWorkspaceAlreadyExistsError
+>;
+
+export const CreateWorkspaceNameViolationError = Type.Object({
+  type: Type.Literal(CreateWorkspaceErrorType.WorkspaceNameViolation),
+  message: Type.String(),
+});
+
+export type CreateWorkspaceNameViolationError = Static<
+  typeof CreateWorkspaceNameViolationError
 >;
 
 export const CreateWorkspaceInvalidDomainError = Type.Object({
@@ -3955,6 +3979,7 @@ export type CreateWorkspaceInvalidDomainError = Static<
 export const CreateWorkspaceError = Type.Union([
   CreateWorkspaceAlreadyExistsError,
   CreateWorkspaceInvalidDomainError,
+  CreateWorkspaceNameViolationError,
 ]);
 
 export type CreateWorkspaceError = Static<typeof CreateWorkspaceError>;
@@ -3974,6 +3999,7 @@ export const WorkspaceResourceExtended = Type.Composite([
     type: WorkspaceTypeApp,
     writeKey: Type.String(),
     domain: Type.Optional(Type.String()),
+    status: WorkspaceStatusDb,
   }),
 ]);
 
@@ -4037,6 +4063,37 @@ export type OptionalAllOrNothing<T, E> = T & (E | EmptyObject);
 export type MakeRequired<T, K extends keyof T> = Omit<T, K> &
   Required<Pick<T, K>>;
 
-export type WorkspaceIdentifier =
-  | { workspaceId: string }
-  | { externalId: string };
+export const WorkspaceIdentifier = Type.Union([
+  Type.Object({
+    workspaceId: Type.String(),
+  }),
+  Type.Object({
+    externalId: Type.String(),
+  }),
+]);
+
+export type WorkspaceIdentifier = Static<typeof WorkspaceIdentifier>;
+
+export const UpsertEmailProviderRequest = Type.Object({
+  workspaceId: Type.String(),
+  setDefault: Type.Optional(Type.Boolean()),
+  config: EmailProviderSecret,
+});
+
+export type UpsertEmailProviderRequest = Static<
+  typeof UpsertEmailProviderRequest
+>;
+
+export const UpsertSmsProviderRequest = Type.Object({
+  workspaceId: Type.String(),
+  setDefault: Type.Optional(Type.Boolean()),
+  config: SmsProviderSecret,
+});
+
+export type UpsertSmsProviderRequest = Static<typeof UpsertSmsProviderRequest>;
+
+export const TombstoneWorkspaceRequest = WorkspaceIdentifier;
+
+export type TombstoneWorkspaceRequest = Static<
+  typeof TombstoneWorkspaceRequest
+>;

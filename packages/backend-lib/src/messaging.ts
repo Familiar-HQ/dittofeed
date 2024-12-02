@@ -14,6 +14,7 @@ import { err, ok, Result } from "neverthrow";
 import { Message as PostMarkRequiredFields } from "postmark";
 import * as R from "remeda";
 import { Overwrite } from "utility-types";
+import { validate as validateUuid } from "uuid";
 
 import { getObject, storage } from "./blobStorage";
 import { sendMail as sendMailAmazonSes } from "./destinations/amazonses";
@@ -35,6 +36,7 @@ import {
   constructUnsubscribeHeaders,
   UnsubscribeHeaders,
 } from "./messaging/email";
+import { withSpan } from "./openTelemetry";
 import prisma from "./prisma";
 import {
   inSubscriptionGroup,
@@ -128,6 +130,9 @@ export async function findMessageTemplate({
   id: string;
   channel: ChannelType;
 }): Promise<Result<MessageTemplateResource | null, Error>> {
+  if (!validateUuid(id)) {
+    return ok(null);
+  }
   const template = await prisma().messageTemplate.findUnique({
     where: {
       id,
@@ -146,43 +151,32 @@ export async function findMessageTemplate({
 export async function upsertMessageTemplate(
   data: UpsertMessageTemplateResource,
 ): Promise<MessageTemplateResource> {
-  let messageTemplate: MessageTemplate;
   const draft = data.draft === null ? Prisma.DbNull : data.draft;
+  const where: Prisma.MessageTemplateWhereUniqueInput = data.id
+    ? { id: data.id }
+    : {
+        workspaceId_name: {
+          workspaceId: data.workspaceId,
+          name: data.name,
+        },
+      };
 
-  if (data.name && data.workspaceId) {
-    messageTemplate = await prisma().messageTemplate.upsert({
-      where: {
-        id: data.id,
-      },
-      create: {
-        workspaceId: data.workspaceId,
-        name: data.name,
-        id: data.id,
-        definition: data.definition,
-        draft,
-      },
-      update: {
-        workspaceId: data.workspaceId,
-        name: data.name,
-        id: data.id,
-        definition: data.definition,
-        draft,
-      },
-    });
-  } else {
-    messageTemplate = await prisma().messageTemplate.update({
-      where: {
-        id: data.id,
-      },
-      data: {
-        workspaceId: data.workspaceId,
-        name: data.name,
-        id: data.id,
-        definition: data.definition,
-        draft,
-      },
-    });
-  }
+  const messageTemplate = await prisma().messageTemplate.upsert({
+    where,
+    create: {
+      workspaceId: data.workspaceId,
+      name: data.name,
+      id: data.id,
+      definition: data.definition,
+      draft,
+    },
+    update: {
+      name: data.name,
+      definition: data.definition,
+      draft,
+    },
+  });
+
   return unwrap(enrichMessageTemplate(messageTemplate));
 }
 
@@ -1732,15 +1726,24 @@ export type Sender = (
 export async function sendMessage(
   params: SendMessageParameters,
 ): Promise<BackendMessageSendResult> {
-  logger().debug({ params }, "sending message");
-  switch (params.channel) {
-    case ChannelType.Email:
-      return sendEmail(params);
-    case ChannelType.Sms:
-      return sendSms(params);
-    case ChannelType.MobilePush:
-      throw new Error("not implemented");
-    case ChannelType.Webhook:
-      return sendWebhook(params);
-  }
+  return withSpan({ name: "sendMessage" }, async (span) => {
+    span.setAttributes({
+      channel: params.channel,
+      workspaceId: params.workspaceId,
+      templateId: params.templateId,
+      journeyId: params.messageTags?.journeyId,
+      messageId: params.messageTags?.messageId,
+      nodeId: params.messageTags?.nodeId,
+    });
+    switch (params.channel) {
+      case ChannelType.Email:
+        return sendEmail(params);
+      case ChannelType.Sms:
+        return sendSms(params);
+      case ChannelType.MobilePush:
+        throw new Error("not implemented");
+      case ChannelType.Webhook:
+        return sendWebhook(params);
+    }
+  });
 }

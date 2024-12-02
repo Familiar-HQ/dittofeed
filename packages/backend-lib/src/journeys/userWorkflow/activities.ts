@@ -7,6 +7,7 @@ import { omit } from "remeda";
 import { submitTrack } from "../../apps/track";
 import logger from "../../logger";
 import { Sender, sendMessage, SendMessageParameters } from "../../messaging";
+import { withSpan } from "../../openTelemetry";
 import prisma from "../../prisma";
 import { calculateKeyedSegment } from "../../segments";
 import {
@@ -136,69 +137,86 @@ export function sendMessageFactory(sender: Sender) {
   return async function sendMessageWithSender(
     params: SendParamsV2,
   ): Promise<boolean> {
-    const { messageId, userId, journeyId, nodeId, templateId, runId } = params;
-    const now = new Date();
-    const sendResult = await sendMessageInner({
-      ...params,
-      sender,
-    });
-    let shouldContinue: boolean;
-    let event: InternalEventType;
-    let trackingProperties: TrackData["properties"] = {
-      journeyId,
-      nodeId,
-      templateId,
-      runId,
-    };
-
-    if (sendResult.isErr()) {
-      shouldContinue = false;
-      event = sendResult.error.type;
-
-      trackingProperties = {
-        ...trackingProperties,
-        ...omit(sendResult.error, ["type"]),
+    return withSpan({ name: "sendMessageWithSender" }, async (span) => {
+      span.setAttributes({
+        workspaceId: params.workspaceId,
+        messageId: params.messageId,
+        userId: params.userId,
+        journeyId: params.journeyId,
+        nodeId: params.nodeId,
+        templateId: params.templateId,
+        runId: params.runId,
+      });
+      const { messageId, userId, journeyId, nodeId, templateId, runId } =
+        params;
+      const now = new Date();
+      const sendResult = await sendMessageInner({
+        ...params,
+        sender,
+      });
+      let shouldContinue: boolean;
+      let event: InternalEventType;
+      let trackingProperties: TrackData["properties"] = {
+        journeyId,
+        nodeId,
+        templateId,
+        runId,
       };
-    } else {
-      shouldContinue = true;
-      event = sendResult.value.type;
 
-      trackingProperties = {
-        ...trackingProperties,
-        ...omit(sendResult.value, ["type"]),
+      if (sendResult.isErr()) {
+        shouldContinue = false;
+        event = sendResult.error.type;
+
+        trackingProperties = {
+          ...trackingProperties,
+          ...omit(sendResult.error, ["type"]),
+        };
+      } else {
+        shouldContinue = true;
+        event = sendResult.value.type;
+
+        trackingProperties = {
+          ...trackingProperties,
+          ...omit(sendResult.value, ["type"]),
+        };
+      }
+
+      const trackData: TrackData = {
+        userId,
+        messageId,
+        event,
+        timestamp: now.toISOString(),
+        properties: trackingProperties,
       };
-    }
+      logger().debug({ trackData }, "send message track data");
 
-    const trackData: TrackData = {
-      userId,
-      messageId,
-      event,
-      timestamp: now.toISOString(),
-      properties: trackingProperties,
-    };
-
-    await submitTrack({
-      workspaceId: params.workspaceId,
-      data: trackData,
+      await submitTrack({
+        workspaceId: params.workspaceId,
+        data: trackData,
+      });
+      return shouldContinue;
     });
-    return shouldContinue;
   };
 }
 
 export const sendMessageV2 = sendMessageFactory(sendMessage);
 
 export async function isRunnable({
-  userId,
+  workspaceId,
   journeyId,
+  userId,
   eventKey,
   eventKeyName,
 }: {
+  // optional so that this is backwards compatible, but should be provided
+  // moving forward
+  workspaceId?: string;
   journeyId: string;
   userId: string;
   eventKey?: string;
   eventKeyName?: string;
 }): Promise<boolean> {
-  const [previousExitEvent, journey] = await Promise.all([
+  const [previousExitEvent, journey, workspace] = await Promise.all([
     prisma().userJourneyEvent.findFirst({
       where: {
         journeyId,
@@ -215,6 +233,9 @@ export async function isRunnable({
         id: journeyId,
       },
     }),
+    workspaceId
+      ? prisma().workspace.findUnique({ where: { id: workspaceId } })
+      : null,
   ]);
   if (!previousExitEvent) {
     return true;
@@ -235,6 +256,9 @@ export async function isRunnable({
       },
       "can run multiple is false, journey is not runnable",
     );
+  }
+  if (workspace !== null && workspace.status !== "Active") {
+    return false;
   }
   return canRunMultiple;
 }
@@ -341,6 +365,10 @@ export async function getSegmentAssignment(
     segmentId,
     inSegment: result.value,
   };
+}
+
+export function getWorkspace(workspaceId: string) {
+  return prisma().workspace.findUnique({ where: { id: workspaceId } });
 }
 
 export { getEarliestComputePropertyPeriod } from "../../computedProperties/periods";
