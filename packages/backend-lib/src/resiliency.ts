@@ -4,7 +4,7 @@ import { WORKSPACE_COMPUTE_LATENCY_METRIC } from "./constants";
 import logger, { publicLogger } from "./logger";
 import { getMeter } from "./openTelemetry";
 import prisma, { Prisma } from "./prisma";
-import { ComputedPropertyStep, Workspace } from "./types";
+import { ComputedPropertyStep, Workspace, WorkspaceStatus } from "./types";
 
 const PUBLIC_PREFIX = "DF_PUBLIC";
 
@@ -85,7 +85,11 @@ export async function observeWorkspaceComputeLatency() {
         periodsQuery,
       );
     })(),
-    prisma().workspace.findMany(),
+    prisma().workspace.findMany({
+      where: {
+        status: WorkspaceStatus.Active,
+      },
+    }),
   ]);
 
   observeWorkspaceComputeLatencyInner({
@@ -155,8 +159,10 @@ async function emitPublicSignals({ workspaces }: { workspaces: Workspace[] }) {
   }
 }
 
-export async function emitGlobalSignals() {
-  logger().info("Emitting global signals");
+export async function findActiveWorkspaces(): Promise<{
+  workspaces: Workspace[];
+  periods: { to: Date; workspaceId: string }[];
+}> {
   const [periods, workspaces] = await Promise.all([
     (async () => {
       const periodsQuery = Prisma.sql`
@@ -164,8 +170,10 @@ export async function emitGlobalSignals() {
           "workspaceId",
           MAX("to") as to
         FROM "ComputedPropertyPeriod"
+        JOIN "Workspace" ON "ComputedPropertyPeriod"."workspaceId" = "Workspace"."id"
         WHERE
           "step" = ${ComputedPropertyStep.ProcessAssignments}
+          AND "Workspace"."status" = ${WorkspaceStatus.Active}::text::\"WorkspaceStatus\"
         GROUP BY "workspaceId";
       `;
       return prisma().$queryRaw<{ to: Date; workspaceId: string }[]>(
@@ -173,11 +181,21 @@ export async function emitGlobalSignals() {
       );
     })(),
     prisma().workspace.findMany({
-      orderBy: {
-        createdAt: "asc",
+      where: {
+        status: WorkspaceStatus.Active,
       },
     }),
   ]);
+
+  return {
+    workspaces,
+    periods,
+  };
+}
+
+export async function emitGlobalSignals() {
+  logger().info("Emitting global signals");
+  const { workspaces, periods } = await findActiveWorkspaces();
 
   observeWorkspaceComputeLatencyInner({
     workspaces,

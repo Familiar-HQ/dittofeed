@@ -3491,6 +3491,88 @@ describe("computeProperties", () => {
       ],
     },
     {
+      description: "trait segment with not exists operator",
+      userProperties: [
+        {
+          name: "id",
+          definition: {
+            type: UserPropertyDefinitionType.Id,
+          },
+        },
+      ],
+      segments: [
+        {
+          name: "emailNotExists",
+          definition: {
+            entryNode: {
+              type: SegmentNodeType.Trait,
+              id: "1",
+              path: "email",
+              operator: {
+                type: SegmentOperatorType.NotExists,
+              },
+            },
+            nodes: [],
+          },
+        },
+      ],
+      steps: [
+        {
+          type: EventsStepType.SubmitEvents,
+          events: [
+            {
+              type: EventType.Identify,
+              userId: "user-1",
+              offsetMs: -100,
+              traits: {
+                email: "test1@email.com",
+              },
+            },
+            {
+              type: EventType.Identify,
+              userId: "user-2",
+              offsetMs: -100,
+              traits: {
+                email: "",
+              },
+            },
+            {
+              type: EventType.Identify,
+              userId: "user-3",
+              offsetMs: -100,
+              traits: {},
+            },
+          ],
+        },
+        {
+          type: EventsStepType.ComputeProperties,
+        },
+        {
+          type: EventsStepType.Assert,
+          users: [
+            {
+              id: "user-1",
+              segments: {
+                emailNotExists: null,
+              },
+            },
+            {
+              id: "user-2",
+              segments: {
+                emailNotExists: true,
+              },
+            },
+            {
+              id: "user-3",
+              segments: {
+                emailNotExists: true,
+              },
+            },
+          ],
+        },
+      ],
+    },
+    {
       description: "performed segment with nested properties",
       userProperties: [],
       segments: [
@@ -3668,6 +3750,501 @@ describe("computeProperties", () => {
             },
             {
               id: "user-4",
+              segments: {
+                lastPerformed: null,
+              },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      description: "last performed segment with exists operator",
+      userProperties: [],
+      segments: [
+        {
+          name: "lastPerformed",
+          definition: {
+            entryNode: {
+              type: SegmentNodeType.LastPerformed,
+              id: "1",
+              event: "test",
+              whereProperties: [
+                {
+                  path: "kind",
+                  operator: {
+                    type: SegmentOperatorType.Exists,
+                  },
+                },
+              ],
+              hasProperties: [
+                {
+                  path: "group",
+                  operator: {
+                    type: SegmentOperatorType.Exists,
+                  },
+                },
+              ],
+            },
+            nodes: [],
+          },
+        },
+      ],
+      steps: [
+        {
+          type: EventsStepType.SubmitEvents,
+          events: [
+            {
+              type: EventType.Track,
+              userId: "user-1",
+              event: "test",
+              offsetMs: -100,
+              properties: {
+                kind: "integration",
+                group: "first",
+              },
+            },
+            {
+              type: EventType.Track,
+              userId: "user-2",
+              event: "unrelated",
+              offsetMs: -100,
+              properties: {
+                kind: "integration",
+              },
+            },
+            {
+              type: EventType.Track,
+              userId: "user-3",
+              event: "test",
+              offsetMs: -100,
+              properties: {
+                group: "first",
+              },
+            },
+            {
+              type: EventType.Track,
+              userId: "user-4",
+              event: "test",
+              offsetMs: -100,
+              properties: {},
+            },
+          ],
+        },
+        {
+          type: EventsStepType.ComputeProperties,
+        },
+        {
+          type: EventsStepType.Assert,
+          users: [
+            {
+              id: "user-1",
+              segments: {
+                lastPerformed: true,
+              },
+            },
+            {
+              id: "user-2",
+              segments: {
+                lastPerformed: null,
+              },
+            },
+            {
+              id: "user-3",
+              segments: {
+                lastPerformed: null,
+              },
+            },
+            {
+              id: "user-4",
+              segments: {
+                lastPerformed: null,
+              },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      description: "last performed segment with not exists operator",
+      userProperties: [],
+      segments: [
+        {
+          name: "lastPerformed",
+          definition: {
+            entryNode: {
+              type: SegmentNodeType.LastPerformed,
+              id: "1",
+              event: "test",
+              whereProperties: [
+                {
+                  path: "kind",
+                  operator: {
+                    type: SegmentOperatorType.NotExists,
+                  },
+                },
+              ],
+              hasProperties: [
+                {
+                  path: "group",
+                  operator: {
+                    type: SegmentOperatorType.NotExists,
+                  },
+                },
+              ],
+            },
+            nodes: [],
+          },
+        },
+      ],
+      steps: [
+        {
+          type: EventsStepType.SubmitEvents,
+          events: [
+            {
+              type: EventType.Track,
+              userId: "user-1",
+              event: "test",
+              offsetMs: -100,
+              properties: {
+                kind: "integration",
+                group: "first",
+              },
+            },
+            {
+              type: EventType.Track,
+              userId: "user-2",
+              event: "unrelated",
+              offsetMs: -100,
+              properties: {
+                kind: "integration",
+              },
+            },
+            {
+              type: EventType.Track,
+              userId: "user-3",
+              event: "test",
+              offsetMs: -100,
+              properties: {
+                group: "first",
+              },
+            },
+            {
+              type: EventType.Track,
+              userId: "user-4",
+              event: "test",
+              offsetMs: -100,
+              properties: {},
+            },
+          ],
+        },
+        {
+          type: EventsStepType.ComputeProperties,
+        },
+        {
+          type: EventsStepType.Assert,
+          users: [
+            {
+              id: "user-1",
+              segments: {
+                lastPerformed: null,
+              },
+            },
+            {
+              id: "user-2",
+              segments: {
+                lastPerformed: null,
+              },
+            },
+            {
+              id: "user-3",
+              segments: {
+                lastPerformed: null,
+              },
+            },
+            {
+              id: "user-4",
+              segments: {
+                lastPerformed: true,
+              },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      description: "last performed segment with prefix event",
+      userProperties: [],
+      segments: [
+        {
+          name: "lastPerformed",
+          definition: {
+            entryNode: {
+              type: SegmentNodeType.LastPerformed,
+              id: "1",
+              event: "eventNamespace.*",
+              whereProperties: [
+                {
+                  path: "kind",
+                  operator: {
+                    type: SegmentOperatorType.Exists,
+                  },
+                },
+              ],
+              hasProperties: [
+                {
+                  path: "group",
+                  operator: {
+                    type: SegmentOperatorType.Exists,
+                  },
+                },
+              ],
+            },
+            nodes: [],
+          },
+        },
+      ],
+      steps: [
+        {
+          type: EventsStepType.SubmitEvents,
+          events: [
+            {
+              type: EventType.Track,
+              userId: "user-1",
+              event: "eventNamespace.test1",
+              offsetMs: -100,
+              properties: {
+                kind: "integration",
+                group: "first",
+              },
+            },
+            {
+              type: EventType.Track,
+              userId: "user-2",
+              event: "eventNamespace.test2",
+              offsetMs: -100,
+              properties: {
+                kind: "integration",
+                group: "first",
+              },
+            },
+            {
+              type: EventType.Track,
+              userId: "user-3",
+              event: "otherNamespace.test3",
+              offsetMs: -100,
+              properties: {
+                kind: "integration",
+                group: "first",
+              },
+            },
+          ],
+        },
+        {
+          type: EventsStepType.ComputeProperties,
+        },
+        {
+          type: EventsStepType.Assert,
+          users: [
+            {
+              id: "user-1",
+              segments: {
+                lastPerformed: true,
+              },
+            },
+            {
+              id: "user-2",
+              segments: {
+                lastPerformed: true,
+              },
+            },
+            {
+              id: "user-3",
+              segments: {
+                lastPerformed: null,
+              },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      description: "last performed segment with less than operator",
+      userProperties: [],
+      segments: [
+        {
+          name: "lastPerformed",
+          definition: {
+            entryNode: {
+              type: SegmentNodeType.LastPerformed,
+              id: "1",
+              event: "test",
+              whereProperties: [
+                {
+                  path: "kind",
+                  operator: {
+                    type: SegmentOperatorType.Exists,
+                  },
+                },
+              ],
+              hasProperties: [
+                {
+                  path: "count",
+                  operator: {
+                    type: SegmentOperatorType.LessThan,
+                    value: 10,
+                  },
+                },
+              ],
+            },
+            nodes: [],
+          },
+        },
+      ],
+      steps: [
+        {
+          type: EventsStepType.SubmitEvents,
+          events: [
+            {
+              type: EventType.Track,
+              userId: "user-1",
+              event: "test",
+              offsetMs: -100,
+              properties: {
+                kind: "integration",
+                count: 9,
+              },
+            },
+            {
+              type: EventType.Track,
+              userId: "user-2",
+              event: "test",
+              offsetMs: -100,
+              properties: {
+                kind: "integration",
+              },
+            },
+            {
+              type: EventType.Track,
+              userId: "user-3",
+              event: "test",
+              offsetMs: -100,
+              properties: {
+                kind: "integration",
+                count: 11,
+              },
+            },
+          ],
+        },
+        {
+          type: EventsStepType.ComputeProperties,
+        },
+        {
+          type: EventsStepType.Assert,
+          users: [
+            {
+              id: "user-1",
+              segments: {
+                lastPerformed: true,
+              },
+            },
+            {
+              id: "user-2",
+              segments: {
+                lastPerformed: null,
+              },
+            },
+            {
+              id: "user-3",
+              segments: {
+                lastPerformed: null,
+              },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      description:
+        "last performed segment with equals numeric value where property",
+      userProperties: [],
+      segments: [
+        {
+          name: "lastPerformed",
+          definition: {
+            entryNode: {
+              type: SegmentNodeType.LastPerformed,
+              id: "1",
+              event: "test",
+              hasProperties: [
+                {
+                  path: "count",
+                  operator: {
+                    type: SegmentOperatorType.Equals,
+                    value: "10",
+                  },
+                },
+              ],
+            },
+            nodes: [],
+          },
+        },
+      ],
+      steps: [
+        {
+          type: EventsStepType.SubmitEvents,
+          events: [
+            {
+              type: EventType.Track,
+              userId: "user-1",
+              event: "test",
+              offsetMs: -100,
+              properties: {
+                kind: "integration",
+                count: 10,
+              },
+            },
+            {
+              type: EventType.Track,
+              userId: "user-2",
+              event: "test",
+              offsetMs: -100,
+              properties: {
+                kind: "integration",
+              },
+            },
+            {
+              type: EventType.Track,
+              userId: "user-3",
+              event: "test",
+              offsetMs: -100,
+              properties: {
+                kind: "integration",
+                count: 11,
+              },
+            },
+          ],
+        },
+        {
+          type: EventsStepType.ComputeProperties,
+        },
+        {
+          type: EventsStepType.Assert,
+          users: [
+            {
+              id: "user-1",
+              segments: {
+                lastPerformed: true,
+              },
+            },
+            {
+              id: "user-2",
+              segments: {
+                lastPerformed: null,
+              },
+            },
+            {
+              id: "user-3",
               segments: {
                 lastPerformed: null,
               },

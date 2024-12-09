@@ -20,6 +20,7 @@ import {
   JourneyDefinition,
   JourneyDraft,
   Nullable,
+  NullableAndOptional,
   SegmentDefinition,
   UserPropertyDefinition,
   WorkspaceMemberResource,
@@ -228,61 +229,85 @@ export enum AmazonSesComplaintSubType {
   Virus = "virus",
 }
 
-export const AmazonSesMailData = Type.Object({
-  // Thes fields are required because we use them for application logic.
-  // Otherwise we default to making all fields optional, because we don't want
-  // to fail our webhook if they're not present.
-  timestamp: Type.String(),
-  messageId: Type.String(),
-  source: Type.Optional(Type.String()),
-  sourceArn: Type.Optional(Type.String()),
-  sourceIp: Type.Optional(Type.String()),
-  sendingAccountId: Type.Optional(Type.String()),
-  callerIdentity: Type.Optional(Type.String()),
-  destination: Type.Optional(Type.Array(Type.String())),
-  headers: Type.Optional(
-    Type.Array(
-      Type.Object({
-        name: Type.Optional(Type.String()),
-        value: Type.Optional(Type.String()),
-      }),
-    ),
-  ),
-  headersTruncated: Type.Optional(Type.Boolean()),
-  commonHeaders: Type.Optional(
+export const AmazonSesMailData = Type.Composite([
+  Type.Object({
+    // These fields are required because we use them for application logic.
+    // Otherwise we default to making all fields optional, because we don't want
+    // to fail our webhook if they're not present.
+    timestamp: Type.String(),
+    messageId: Type.String(),
+  }),
+  Type.Partial(
     Type.Object({
-      from: Type.Optional(Type.Array(Type.String())),
-      to: Type.Optional(Type.Array(Type.String())),
-      date: Type.Optional(Type.String()),
-      messageId: Type.Optional(Type.String()),
-      subject: Type.Optional(Type.String()),
+      source: NullableAndOptional(Type.String()),
+      sourceArn: NullableAndOptional(Type.String()),
+      sourceIp: NullableAndOptional(Type.String()),
+      sendingAccountId: NullableAndOptional(Type.String()),
+      callerIdentity: NullableAndOptional(Type.String()),
+      destination: NullableAndOptional(Type.Array(Type.String())),
+      headers: NullableAndOptional(
+        Type.Array(
+          Type.Partial(
+            Type.Object({
+              name: NullableAndOptional(Type.String()),
+              value: NullableAndOptional(Type.String()),
+            }),
+          ),
+        ),
+      ),
+      headersTruncated: NullableAndOptional(Type.Boolean()),
+      commonHeaders: NullableAndOptional(
+        Type.Partial(
+          Type.Object({
+            from: NullableAndOptional(Type.Array(Type.String())),
+            to: NullableAndOptional(Type.Array(Type.String())),
+            date: NullableAndOptional(Type.String()),
+            messageId: NullableAndOptional(Type.String()),
+            subject: NullableAndOptional(Type.String()),
+          }),
+        ),
+      ),
+      tags: NullableAndOptional(
+        Type.Record(Type.String(), Type.Array(Type.String())),
+      ),
     }),
   ),
-  tags: Type.Optional(Type.Record(Type.String(), Type.Array(Type.String()))),
-});
+]);
 
 export type AmazonSesMailData = Static<typeof AmazonSesMailData>;
 
 export const AmazonSesClickEvent = Type.Object({
   eventType: Type.Literal(AmazonSesNotificationType.Click),
   mail: AmazonSesMailData,
-  click: Type.Object({
-    ipAddress: Type.Optional(Type.String()),
-    timestamp: Type.String(),
-    userAgent: Type.Optional(Type.String()),
-    link: Type.Optional(Type.String()),
-    linkTags: Type.Optional(Type.String()), // This type may not be correct
-  }),
+  click: Type.Composite([
+    Type.Object({
+      timestamp: Type.String(),
+    }),
+    Type.Partial(
+      Type.Object({
+        ipAddress: NullableAndOptional(Type.String()),
+        userAgent: NullableAndOptional(Type.String()),
+        link: NullableAndOptional(Type.String()),
+        linkTags: NullableAndOptional(Type.String()),
+      }),
+    ),
+  ]),
 });
 
 export const AmazonSesOpenEvent = Type.Object({
   eventType: Type.Literal(AmazonSesNotificationType.Open),
   mail: AmazonSesMailData,
-  open: Type.Object({
-    ipAddress: Type.Optional(Type.String()),
-    timestamp: Type.String(),
-    userAgent: Type.Optional(Type.String()),
-  }),
+  open: Type.Composite([
+    Type.Object({
+      timestamp: Type.String(),
+    }),
+    Type.Partial(
+      Type.Object({
+        ipAddress: NullableAndOptional(Type.String()),
+        userAgent: NullableAndOptional(Type.String()),
+      }),
+    ),
+  ]),
 });
 
 export const AmazonSesSendEvent = Type.Object({
@@ -293,66 +318,95 @@ export const AmazonSesSendEvent = Type.Object({
 export const AmazonSesRejectEvent = Type.Object({
   eventType: Type.Literal(AmazonSesNotificationType.Reject),
   mail: AmazonSesMailData,
-  reject: Type.Object({
-    reason: Type.Optional(Type.String()),
-  }),
+  reject: Type.Partial(
+    Type.Object({
+      reason: NullableAndOptional(Type.String()),
+    }),
+  ),
 });
 
 export const AmazonSesBounceEvent = Type.Object({
   eventType: Type.Literal(AmazonSesNotificationType.Bounce),
   mail: AmazonSesMailData,
-  bounce: Type.Object({
-    bounceType: Type.Optional(Type.Enum(AmazonSesBounceType)),
-    bounceSubType: Type.Optional(Type.Enum(AmazonSesBounceSubType)),
-    bouncedRecipients: Type.Optional(
-      Type.Array(
-        Type.Object({
-          emailAddress: Type.String(),
-          action: Type.Optional(Type.String()),
-          status: Type.Optional(Type.String()),
-          diagnosticCode: Type.Optional(Type.String()),
-        }),
-      ),
+  bounce: Type.Composite([
+    Type.Object({
+      timestamp: Type.String(),
+    }),
+
+    Type.Partial(
+      Type.Object({
+        bounceType: NullableAndOptional(Type.Enum(AmazonSesBounceType)),
+        bounceSubType: NullableAndOptional(Type.Enum(AmazonSesBounceSubType)),
+        bouncedRecipients: NullableAndOptional(
+          Type.Array(
+            Type.Composite([
+              Type.Object({
+                emailAddress: Type.String(),
+              }),
+              Type.Partial(
+                Type.Object({
+                  action: NullableAndOptional(Type.String()),
+                  status: NullableAndOptional(Type.String()),
+                  diagnosticCode: NullableAndOptional(Type.String()),
+                }),
+              ),
+            ]),
+          ),
+        ),
+        feedbackId: NullableAndOptional(Type.String()),
+        remoteMtaIp: NullableAndOptional(Type.String()),
+        reportingMTA: NullableAndOptional(Type.String()),
+      }),
     ),
-    timestamp: Type.String(),
-    feedbackId: Type.Optional(Type.String()),
-    remoteMtaIp: Type.Optional(Type.String()),
-    reportingMTA: Type.Optional(Type.String()),
-  }),
+  ]),
 });
+
+export type AmazonSesBounceEvent = Static<typeof AmazonSesBounceEvent>;
 
 export const AmazonSesComplaintEvent = Type.Object({
   eventType: Type.Literal(AmazonSesNotificationType.Complaint),
   mail: AmazonSesMailData,
-  complaint: Type.Object({
-    complainedRecipients: Type.Optional(
-      Type.Array(
-        Type.Object({
-          email: Type.String(),
-        }),
-      ),
+  complaint: Type.Composite([
+    Type.Object({
+      timestamp: Type.String(),
+    }),
+    Type.Partial(
+      Type.Object({
+        complainedRecipients: NullableAndOptional(
+          Type.Array(
+            Type.Object({
+              email: Type.String(),
+            }),
+          ),
+        ),
+        feedbackId: NullableAndOptional(Type.String()),
+        complaintSubType: NullableAndOptional(
+          Type.Enum(AmazonSesComplaintSubType),
+        ),
+        userAgent: NullableAndOptional(Type.String()),
+        complaintFeedbackType: NullableAndOptional(Type.String()),
+        arrivalDate: NullableAndOptional(Type.String()),
+      }),
     ),
-    timestamp: Type.String(),
-    feedbackId: Type.Optional(Type.String()),
-    complaintSubType: Type.Optional(Type.Enum(AmazonSesComplaintSubType)),
-    userAgent: Type.Optional(Type.String()),
-    complaintFeedbackType: Type.Optional(Type.String()),
-    arrivalDate: Type.Optional(Type.String()),
-  }),
+  ]),
 });
+
+export type AmazonSesComplaintEvent = Static<typeof AmazonSesComplaintEvent>;
 
 export const AmazonSesDeliveryEvent = Type.Object({
   eventType: Type.Literal(AmazonSesNotificationType.Delivery),
   mail: AmazonSesMailData,
   delivery: Type.Object({
     timestamp: Type.String(),
-    processingTimeMillis: Type.Optional(Type.Integer()),
-    recipients: Type.Optional(Type.Array(Type.String())),
-    smtpResponse: Type.Optional(Type.String()),
-    reportingMTA: Type.Optional(Type.String()),
-    remoteMtaIp: Type.Optional(Type.String()),
+    processingTimeMillis: NullableAndOptional(Type.Integer()),
+    recipients: NullableAndOptional(Type.Array(Type.String())),
+    smtpResponse: NullableAndOptional(Type.String()),
+    reportingMTA: NullableAndOptional(Type.String()),
+    remoteMtaIp: NullableAndOptional(Type.String()),
   }),
 });
+
+export type AmazonSesDeliveryEvent = Static<typeof AmazonSesDeliveryEvent>;
 
 export enum AmazonSNSEventTypes {
   SubscriptionConfirmation = "SubscriptionConfirmation",
@@ -608,6 +662,13 @@ export enum RequestContextErrorType {
   EmailNotVerified = "EmailNotVerified",
   ApplicationError = "ApplicationError",
   NotAuthenticated = "NotAuthenticated",
+  WorkspaceInactive = "WorkspaceInactive",
+}
+
+export interface WorkspaceInactiveError {
+  type: RequestContextErrorType.WorkspaceInactive;
+  message: string;
+  workspace: WorkspaceResource;
 }
 
 export interface UnauthorizedError {
@@ -644,7 +705,8 @@ export type RequestContextError =
   | NotOnboardedError
   | ApplicationError
   | EmailNotVerifiedError
-  | NotAuthenticatedError;
+  | NotAuthenticatedError
+  | WorkspaceInactiveError;
 
 export type RequestContextResult = Result<
   DFRequestContext,

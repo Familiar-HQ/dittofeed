@@ -26,6 +26,9 @@ import {
   RenameKey,
   SegmentAssignment as SegmentAssignmentDb,
   SegmentUpdate,
+  SmsMessageVariant,
+  SmsProviderOverride,
+  SmsProviderType,
   UserWorkflowTrackEvent,
   WaitForNode,
   WaitForSegmentChild,
@@ -50,6 +53,7 @@ const {
   findNextLocalizedTime,
   getEarliestComputePropertyPeriod,
   getUserPropertyDelay,
+  getWorkspace,
 } = proxyActivities<typeof activities>({
   startToCloseTimeout: "2 minutes",
 });
@@ -130,6 +134,12 @@ export interface UserJourneyWorkflowPropsV1 {
 export type UserJourneyWorkflowProps =
   | UserJourneyWorkflowPropsV1
   | UserJourneyWorkflowPropsV2;
+
+const LONG_RUNNING_NODE_TYPES = new Set<JourneyNodeType>([
+  JourneyNodeType.WaitForNode,
+  JourneyNodeType.DelayNode,
+  JourneyNodeType.SegmentEntryNode,
+]);
 
 export async function userJourneyWorkflow(
   props: UserJourneyWorkflowProps,
@@ -536,10 +546,36 @@ export async function userJourneyWorkflow(
             break;
           }
           case ChannelType.Sms: {
-            variant = {
-              ...omit(currentNode.variant, ["type"]),
-              channel: currentNode.variant.type,
-            };
+            const { providerOverride, senderOverride } = currentNode.variant;
+
+            let smsProviderOverride: SmsProviderOverride;
+            switch (providerOverride) {
+              case SmsProviderType.Twilio: {
+                smsProviderOverride = {
+                  providerOverride: SmsProviderType.Twilio,
+                  senderOverride,
+                };
+                break;
+              }
+              case SmsProviderType.Test: {
+                smsProviderOverride = {
+                  providerOverride: SmsProviderType.Test,
+                  senderOverride: undefined,
+                };
+                break;
+              }
+              default: {
+                smsProviderOverride = {};
+              }
+            }
+
+            const smsVariant: RenameKey<SmsMessageVariant, "type", "channel"> =
+              {
+                ...smsProviderOverride,
+                templateId: currentNode.variant.templateId,
+                channel: currentNode.variant.type,
+              };
+            variant = smsVariant;
             break;
           }
           case ChannelType.Webhook: {
@@ -655,6 +691,19 @@ export async function userJourneyWorkflow(
       eventKey,
       eventKeyName,
     });
+
+    // check if workspace is inactive after a long running node
+    if (LONG_RUNNING_NODE_TYPES.has(currentNode.type)) {
+      const workspace = await getWorkspace(workspaceId);
+      if (workspace?.status !== "Active") {
+        logger.info("workspace is not active, exiting journey", {
+          workspaceId,
+          userId,
+          journeyId,
+        });
+        break;
+      }
+    }
     currentNode = nextNode;
   }
 

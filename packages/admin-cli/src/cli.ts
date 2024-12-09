@@ -1,5 +1,4 @@
 import { createAdminApiKey } from "backend-lib/src/adminApiKeys";
-import { bootstrapWorker } from "backend-lib/src/bootstrap";
 import { computeState } from "backend-lib/src/computedProperties/computePropertiesIncremental";
 import backendConfig from "backend-lib/src/config";
 import { findBaseDir } from "backend-lib/src/dir";
@@ -10,9 +9,14 @@ import { findManySegmentResourcesSafe } from "backend-lib/src/segments";
 import {
   resetComputePropertiesWorkflow,
   resetGlobalCron,
+  startComputePropertiesWorkflow,
 } from "backend-lib/src/segments/computePropertiesWorkflow/lifecycle";
 import { transferResources } from "backend-lib/src/transferResources";
 import { findAllUserPropertyResources } from "backend-lib/src/userProperties";
+import {
+  activateTombstonedWorkspace,
+  tombstoneWorkspace,
+} from "backend-lib/src/workspaces";
 import fs from "fs/promises";
 import { SecretNames } from "isomorphic-lib/src/constants";
 import { unwrap } from "isomorphic-lib/src/resultHandling/resultUtils";
@@ -63,7 +67,7 @@ export async function cli() {
             describe: "The workspace id to bootstrap.",
           },
         }),
-      ({ workspaceId }) => bootstrapWorker({ workspaceId }),
+      ({ workspaceId }) => startComputePropertiesWorkflow({ workspaceId }),
     )
     .command(
       "spawn",
@@ -498,6 +502,73 @@ export async function cli() {
           },
         }),
       ({ workspaceId }) => resetWorkspaceData({ workspaceId }),
+    )
+    .command(
+      "activate-tombstoned-workspace",
+      "Activates a tombstoned workspace.",
+      (cmd) =>
+        cmd.options({
+          "workspace-id": { type: "string", alias: "w", require: true },
+        }),
+      async ({ workspaceId }) => {
+        const result = await activateTombstonedWorkspace(workspaceId);
+        if (result.isErr()) {
+          logger().error(
+            result.error,
+            "Failed to activate tombstoned workspace",
+          );
+          return;
+        }
+        logger().info("Activated tombstoned workspace.");
+      },
+    )
+    .command(
+      "tombstone-workspace",
+      "Tombstones a workspace.",
+      (cmd) =>
+        cmd.options({
+          "workspace-id": { type: "string", alias: "w", require: true },
+        }),
+      async ({ workspaceId }) => {
+        const result = await tombstoneWorkspace(workspaceId);
+        if (result.isErr()) {
+          logger().error(result.error, "Failed to tombstone workspace");
+          return;
+        }
+        logger().info("Tombstoned workspace.");
+      },
+    )
+    .command(
+      "create-admin-api-key",
+      "Creates an admin API key.",
+      (cmd) =>
+        cmd.options({
+          "workspace-name": { type: "string", alias: "w", require: true },
+          name: { type: "string", alias: "n", require: true },
+        }),
+      async ({ workspaceName, name }) => {
+        const workspace = await prisma().workspace.findUnique({
+          where: {
+            name: workspaceName,
+          },
+        });
+        if (!workspace) {
+          logger().error(
+            { workspaceName },
+            "Failed to find workspace to create admin API key",
+          );
+          return;
+        }
+        const result = await createAdminApiKey({
+          workspaceId: workspace.id,
+          name,
+        });
+        if (result.isErr()) {
+          logger().error(result.error, "Failed to create admin API key");
+          return;
+        }
+        logger().info(result.value, "Created admin API key");
+      },
     )
     .demandCommand(1, "# Please provide a valid command")
     .recommendCommands()

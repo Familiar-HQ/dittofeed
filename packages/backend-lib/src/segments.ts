@@ -33,6 +33,7 @@ import {
   UpsertSegmentResource,
   UserWorkflowTrackEvent,
 } from "./types";
+import { findAllUserPropertyAssignmentsForWorkspace } from "./userProperties";
 
 export function enrichSegment(
   segment: Segment,
@@ -278,31 +279,51 @@ export async function findManySegmentResourcesSafe({
  * @returns
  */
 export async function upsertSegment(
-  segment: UpsertSegmentResource,
+  params: UpsertSegmentResource,
 ): Promise<SavedSegmentResource> {
-  const { id, workspaceId, name, definition } = segment;
-  const query = Prisma.sql`
-    INSERT INTO "Segment" ("id", "workspaceId", "name", "definition", "updatedAt")
-    VALUES (${id}::uuid, ${workspaceId}::uuid, ${name}, ${definition}::jsonb, NOW())
-    ON CONFLICT ("id")
-    DO UPDATE SET
-        "workspaceId" = excluded."workspaceId",
-        "name" = COALESCE(excluded."name", "Segment"."name"),
-        "definition" = COALESCE(excluded."definition", "Segment"."definition"),
-        "updatedAt" = NOW(),
-        "definitionUpdatedAt" = CASE WHEN excluded."definition" != "Segment"."definition" THEN NOW() ELSE "Segment"."definitionUpdatedAt" END
-    RETURNING *`;
-  const [result] = (await prisma().$queryRaw(query)) as [Segment];
-  const updatedDefinition = result.definition as SegmentDefinition;
+  const where: Prisma.SegmentWhereUniqueInput = params.id
+    ? {
+        id: params.id,
+      }
+    : {
+        workspaceId_name: {
+          workspaceId: params.workspaceId,
+          name: params.name,
+        },
+      };
 
+  let segment: Segment;
+  if (params.definition) {
+    segment = await prisma().segment.upsert({
+      where,
+      update: {
+        definition: params.definition,
+        name: params.name,
+        definitionUpdatedAt: new Date(),
+      },
+      create: {
+        workspaceId: params.workspaceId,
+        name: params.name,
+        definition: params.definition,
+        id: params.id,
+      },
+    });
+  } else {
+    segment = await prisma().segment.update({
+      where,
+      data: {
+        name: params.name,
+      },
+    });
+  }
   return {
-    id: result.id,
-    workspaceId: result.workspaceId,
-    name: result.name,
-    definition: updatedDefinition,
-    definitionUpdatedAt: result.definitionUpdatedAt.getTime(),
-    updatedAt: Number(result.updatedAt),
-    createdAt: Number(result.createdAt),
+    id: segment.id,
+    workspaceId: segment.workspaceId,
+    name: segment.name,
+    definition: segment.definition as SegmentDefinition,
+    definitionUpdatedAt: segment.definitionUpdatedAt.getTime(),
+    updatedAt: segment.updatedAt.getTime(),
+    createdAt: segment.createdAt.getTime(),
   };
 }
 
@@ -362,33 +383,10 @@ export async function buildSegmentsFile({
         },
       },
     }),
-    prisma().userPropertyAssignment.findMany({
-      where: {
-        workspaceId,
-        userProperty: {
-          name: {
-            in: identifiers,
-          },
-        },
-      },
-      select: {
-        userProperty: {
-          select: {
-            name: true,
-          },
-        },
-        userId: true,
-        value: true,
-      },
+    findAllUserPropertyAssignmentsForWorkspace({
+      workspaceId,
     }),
   ]);
-  const userIdentifiersMap = userIdentifiers.reduce((acc, curr) => {
-    const userPropertyName = curr.userProperty.name;
-    const ui = acc.get(curr.userId) ?? new Map<string, string>();
-    ui.set(userPropertyName, curr.value);
-    acc.set(curr.userId, ui);
-    return acc;
-  }, new Map<string, Map<string, string>>());
 
   const assignments: Record<string, string>[] = dbSegmentAssignments.map(
     (a) => {
@@ -399,13 +397,16 @@ export async function buildSegmentsFile({
         userId: a.userId,
         inSegment: a.inSegment.toString(),
       };
-      const ui = userIdentifiersMap.get(a.userId);
-      ui?.forEach((value, key) => {
-        const parsed = JSON.parse(value) as unknown;
-        if (typeof parsed === "string" && parsed.length > 0) {
-          csvAssignment[key] = parsed;
+      const ui = userIdentifiers[a.userId];
+      if (ui) {
+        for (const key in ui) {
+          const value = ui[key];
+
+          if (typeof value === "string" && value.length > 0) {
+            csvAssignment[key] = value;
+          }
         }
-      });
+      }
       return csvAssignment;
     },
   );

@@ -13,6 +13,7 @@ import {
 } from "./types";
 import {
   findAllUserPropertyAssignments,
+  findAllUserPropertyAssignmentsForWorkspace,
   upsertBulkUserPropertyAssignments,
   UserPropertyBulkUpsertItem,
 } from "./userProperties";
@@ -230,7 +231,7 @@ describe("findAllUserPropertyAssignments", () => {
                 {
                   id: "0",
                   type: UserPropertyDefinitionType.AnyOf,
-                  children: ["1", "2", "3"],
+                  children: ["1", "2", "3", "4"],
                 },
                 {
                   id: "1",
@@ -248,6 +249,13 @@ describe("findAllUserPropertyAssignments", () => {
                   type: UserPropertyDefinitionType.Performed,
                   event: "test1",
                   path: "path2",
+                },
+                {
+                  id: "4",
+                  type: UserPropertyDefinitionType.KeyedPerformed,
+                  event: "testKeyed",
+                  key: "keyPath",
+                  path: "keyValuePath",
                 },
               ],
             } satisfies UserPropertyDefinition,
@@ -282,6 +290,22 @@ describe("findAllUserPropertyAssignments", () => {
 
       expect(actualAssignments2).toEqual({
         [`test-${upId1}`]: 2,
+        id: "userId",
+      });
+
+      const actualAssignments3 = await findAllUserPropertyAssignments({
+        userId: "userId",
+        workspaceId: workspace.id,
+        context: [
+          {
+            keyPath: "val1",
+            keyValuePath: "val2",
+          },
+        ],
+      });
+
+      expect(actualAssignments3).toEqual({
+        [`test-${upId1}`]: "val2",
         id: "userId",
       });
     });
@@ -374,5 +398,58 @@ describe("upsertBulkUserPropertyAssignments", () => {
       throw new Error("Assignment not found");
     }
     expect(assignment.value).toEqual("value1");
+  });
+});
+
+describe("findAllUserPropertyAssignmentsForWorkspace", () => {
+  it("should return the user property assignments for the workspace", async () => {
+    const workspace = await prisma().workspace.create({
+      data: {
+        name: `test-${randomUUID()}`,
+      },
+    });
+    const userProperty = await prisma().userProperty.create({
+      data: {
+        workspaceId: workspace.id,
+        name: "email",
+        definition: {
+          type: UserPropertyDefinitionType.Trait,
+          path: "email",
+        } satisfies UserPropertyDefinition,
+      },
+    });
+    await Promise.all([
+      prisma().userPropertyAssignment.create({
+        data: {
+          workspaceId: workspace.id,
+          userId: "userId1",
+          userPropertyId: userProperty.id,
+          value: "value1",
+        },
+      }),
+      prisma().userPropertyAssignment.create({
+        data: {
+          workspaceId: workspace.id,
+          userId: "userId2",
+          userPropertyId: userProperty.id,
+          value: "value2",
+        },
+      }),
+    ]);
+
+    const assignments = await findAllUserPropertyAssignmentsForWorkspace({
+      workspaceId: workspace.id,
+    });
+
+    expect(assignments).toEqual({
+      userId1: {
+        id: "userId1",
+        email: "value1",
+      },
+      userId2: {
+        id: "userId2",
+        email: "value2",
+      },
+    });
   });
 });

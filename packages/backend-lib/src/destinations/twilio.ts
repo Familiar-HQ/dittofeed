@@ -17,27 +17,36 @@ import {
 
 export const TwilioRestException = RestException;
 
+export interface PhoneNumberSender {
+  from: string;
+}
+
+export interface MessagingServiceSender {
+  messagingServiceSid: string;
+}
+
+export type Sender = PhoneNumberSender | MessagingServiceSender;
+
 export async function sendSms({
   body,
   accountSid,
   authToken,
-  messagingServiceSid,
   to,
   subscriptionGroupId,
   userId,
   workspaceId,
   disableCallback = false,
+  ...sender
 }: {
   body: string;
   to: string;
   accountSid: string;
-  messagingServiceSid: string;
   authToken: string;
   subscriptionGroupId: string | undefined;
   userId: string;
   workspaceId: string;
   disableCallback?: boolean;
-}): Promise<Result<{ sid: string }, RestException | Error>> {
+} & Sender): Promise<Result<{ sid: string }, RestException | Error>> {
   try {
     let statusCallback: string | undefined;
     if (!disableCallback) {
@@ -46,7 +55,7 @@ export async function sendSms({
     }
 
     const createPayload = {
-      messagingServiceSid,
+      ...sender,
       body,
       to,
       statusCallback,
@@ -84,6 +93,7 @@ export async function submitTwilioEvents({
   userId: string;
 }): Promise<ResultAsync<void, Error>> {
   let eventName: InternalEventType;
+  const body = TwilioEvent.Body;
 
   switch (TwilioEvent.SmsStatus) {
     case TwilioMessageStatus.Failed:
@@ -112,6 +122,7 @@ export async function submitTwilioEvents({
     properties: {
       workspaceId,
       userId,
+      body,
     },
   } as BatchTrackData;
 

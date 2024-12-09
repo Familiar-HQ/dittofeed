@@ -11,7 +11,6 @@ import {
   EmptyResponse,
   GetJourneysRequest,
   GetJourneysResponse,
-  Journey,
   JourneyDefinition,
   JourneyDraft,
   JourneyStatsRequest,
@@ -25,6 +24,7 @@ import {
 import { FastifyInstance } from "fastify";
 import { unwrap } from "isomorphic-lib/src/resultHandling/resultUtils";
 import { schemaValidate } from "isomorphic-lib/src/resultHandling/schemaValidation";
+import { validate as validateUuid } from "uuid";
 
 // eslint-disable-next-line @typescript-eslint/require-await
 export default async function journeysController(fastify: FastifyInstance) {
@@ -65,7 +65,6 @@ export default async function journeysController(fastify: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      let journey: Journey;
       const {
         id,
         name,
@@ -75,6 +74,16 @@ export default async function journeysController(fastify: FastifyInstance) {
         canRunMultiple,
         draft,
       } = request.body;
+
+      if (id && !validateUuid(id)) {
+        return reply.status(400).send({
+          message: "Invalid journey id",
+          variant: {
+            type: JourneyUpsertValidationErrorType.IdError,
+            message: "Invalid journey id, must be a valid v4 UUID",
+          },
+        });
+      }
 
       /*
       TODO validate that status transitions satisfy:
@@ -98,50 +107,35 @@ export default async function journeysController(fastify: FastifyInstance) {
         }
       }
 
-      const canCreate = workspaceId && name;
       // null out the draft when the definition is updated or when the draft is
       // explicitly set to null
       const nullableDraft =
         definition || draft === null ? Prisma.DbNull : draft;
 
-      if (canCreate) {
-        journey = await prisma().journey.upsert({
-          where: {
-            id,
-          },
-          create: {
-            id,
-            workspaceId,
-            name,
-            definition,
-            draft: nullableDraft,
-            status,
-            canRunMultiple,
-          },
-          update: {
-            workspaceId,
-            name,
-            definition,
-            draft: nullableDraft,
-            status,
-            canRunMultiple,
-          },
-        });
-      } else {
-        journey = await prisma().journey.update({
-          where: {
-            id,
-          },
-          data: {
-            workspaceId,
-            name,
-            definition,
-            draft: nullableDraft,
-            status,
-            canRunMultiple,
-          },
-        });
-      }
+      const where: Prisma.JourneyWhereUniqueInput = id
+        ? { id }
+        : { workspaceId_name: { workspaceId, name } };
+
+      const journey = await prisma().journey.upsert({
+        where,
+        create: {
+          id,
+          workspaceId,
+          name,
+          definition,
+          draft: nullableDraft,
+          status,
+          canRunMultiple,
+        },
+        update: {
+          name,
+          definition,
+          draft: nullableDraft,
+          status,
+          canRunMultiple,
+        },
+      });
+
       const journeyDefinitionResult = journey.definition
         ? schemaValidate(journey.definition, JourneyDefinition)
         : undefined;

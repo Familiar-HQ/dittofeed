@@ -21,6 +21,7 @@ import {
   ChannelType,
   CompletionStatus,
   EphemeralRequestStatus,
+  InternalEventType,
   SearchDeliveriesRequest,
   SearchDeliveriesResponse,
   SearchDeliveriesResponseItem,
@@ -93,6 +94,33 @@ const initPreviewObject = () => {
     channelType: "",
   };
 };
+
+function humanizeStatus(status: string) {
+  switch (status) {
+    case InternalEventType.MessageSent:
+      return "Sent";
+    case InternalEventType.MessageFailure:
+      return "Failed";
+    case InternalEventType.EmailBounced:
+      return "Bounced";
+    case InternalEventType.EmailMarkedSpam:
+      return "Marked as spam";
+    case InternalEventType.EmailDelivered:
+      return "Delivered";
+    case InternalEventType.EmailOpened:
+      return "Opened";
+    case InternalEventType.EmailClicked:
+      return "Clicked";
+    case InternalEventType.EmailDropped:
+      return "Dropped";
+    case InternalEventType.SmsDelivered:
+      return "Delivered";
+    case InternalEventType.SmsFailed:
+      return "Failed";
+    default:
+      return status;
+  }
+}
 
 const baseColumn: Partial<GridColDef<TableItem>> = {
   flex: 1,
@@ -184,10 +212,40 @@ function getQueryValue(query: ParsedUrlQuery, key: string): string | undefined {
   return val;
 }
 
+export interface GetDeliveriesRequestParams {
+  params: SearchDeliveriesRequest;
+  apiBase: string;
+}
+
+export type GetDeliveriesRequest = (
+  params: GetDeliveriesRequestParams,
+) => Promise<AxiosResponse<unknown, unknown>>;
+
+const defaultGetDeliveriesRequest: GetDeliveriesRequest =
+  function getDeliveriesRequest({ params, apiBase }) {
+    return axios.get(`${apiBase}/api/deliveries`, {
+      params,
+    });
+  };
+
+interface DeliveriesTableExtendedProps {
+  getDeliveriesRequest?: GetDeliveriesRequest;
+  disableJourneyLinks?: boolean;
+  disableTemplateLinks?: boolean;
+  disableUserId?: boolean;
+  showSnippet?: boolean;
+}
+
 export function DeliveriesTable({
   journeyId,
   userId,
-}: Pick<SearchDeliveriesRequest, "journeyId" | "userId">) {
+  getDeliveriesRequest = defaultGetDeliveriesRequest,
+  disableJourneyLinks = false,
+  disableTemplateLinks = false,
+  disableUserId = false,
+  showSnippet = false,
+}: Pick<SearchDeliveriesRequest, "journeyId" | "userId"> &
+  DeliveriesTableExtendedProps) {
   const [pageItems, setPageItems] = React.useState(new Set<string>());
   const [previewObject, setPreviewObject] =
     useState<PreviewObjectInterface>(initPreviewObject());
@@ -265,9 +323,7 @@ export function DeliveriesTable({
           statuses,
         };
 
-        response = await axios.get(`${apiBase}/api/deliveries`, {
-          params,
-        });
+        response = await getDeliveriesRequest({ params, apiBase });
       } catch (e) {
         const error = e as Error;
 
@@ -423,7 +479,7 @@ export function DeliveriesTable({
           from,
           subject,
           replyTo,
-          status: item.status,
+          status: humanizeStatus(item.status),
           channel,
           body,
           ...origin,
@@ -518,14 +574,18 @@ export function DeliveriesTable({
           rows={rows}
           loading={paginationRequest.type === CompletionStatus.InProgress}
           columns={[
-            {
-              field: "userId",
-              headerName: "User ID",
-              renderCell: ({ row }: GridRenderCellParams<TableItem>) => {
-                const href = `/users/${row.userId}`;
-                return <LinkCell href={href} title={row.userId} />;
-              },
-            },
+            ...(disableUserId
+              ? []
+              : [
+                  {
+                    field: "userId",
+                    headerName: "User ID",
+                    renderCell: ({ row }: GridRenderCellParams<TableItem>) => {
+                      const href = `/users/${row.userId}`;
+                      return <LinkCell href={href} title={row.userId} />;
+                    },
+                  },
+                ]),
             {
               field: "to",
               headerName: "To",
@@ -538,11 +598,44 @@ export function DeliveriesTable({
               field: "status",
               headerName: "Status",
             },
+            ...(showSnippet
+              ? [
+                  {
+                    field: "snippet",
+                    headerName: "Snippet",
+                    flex: 2,
+                    renderCell: ({ row }: GridRenderCellParams<TableItem>) => {
+                      const content =
+                        row.channel === ChannelType.Email
+                          ? row.subject
+                          : row.body;
+                      if (!content) return null;
+                      return (
+                        <Tooltip title={content}>
+                          <Box
+                            sx={{
+                              width: "100%",
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
+                            {content}
+                          </Box>
+                        </Tooltip>
+                      );
+                    },
+                  },
+                ]
+              : []),
             {
               field: "originId",
               flex: 1,
               headerName: "Journey / Broadcast",
               renderCell: ({ row }: GridRenderCellParams<TableItem>) => {
+                if (disableJourneyLinks) {
+                  return <span>{row.originName}</span>;
+                }
                 const href =
                   row.originType === "broadcast"
                     ? `/broadcasts/review/${row.originId}`
@@ -554,6 +647,9 @@ export function DeliveriesTable({
               field: "templateId",
               headerName: "Template",
               renderCell: ({ row }: GridRenderCellParams<TableItem>) => {
+                if (disableTemplateLinks) {
+                  return <span>{row.templateName}</span>;
+                }
                 let href: string | null = null;
                 if (row.originType === "broadcast") {
                   href = `/broadcasts/template/${row.originId}`;

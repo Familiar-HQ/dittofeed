@@ -35,6 +35,9 @@ export const JsonResult = <T extends TSchema, E extends TSchema>(
 export const Nullable = <T extends TSchema>(type: T) =>
   Type.Union([type, Type.Null()]);
 
+export const NullableAndOptional = <T extends TSchema>(type: T) =>
+  Type.Union([Type.Null(), Type.Optional(type)]);
+
 export type JSONValue =
   | string
   | number
@@ -157,6 +160,7 @@ export enum SegmentOperatorType {
   HasBeen = "HasBeen",
   NotEquals = "NotEquals",
   Exists = "Exists",
+  NotExists = "NotExists",
   GreaterThanOrEqual = "GreaterThanOrEqual",
   LessThan = "LessThan",
 }
@@ -187,6 +191,12 @@ export const ExistsOperator = Type.Object({
 });
 
 export type ExistsOperator = Static<typeof ExistsOperator>;
+
+export const NotExistsOperator = Type.Object({
+  type: Type.Literal(SegmentOperatorType.NotExists),
+});
+
+export type NotExistsOperator = Static<typeof NotExistsOperator>;
 
 export const SegmentEqualsOperator = Type.Object({
   type: Type.Literal(SegmentOperatorType.Equals),
@@ -224,6 +234,7 @@ export const SegmentOperator = Type.Union([
   SegmentNotEqualsOperator,
   SegmentHasBeenOperator,
   ExistsOperator,
+  NotExistsOperator,
   SegmentGreaterThanOrEqualOperator,
   SegmentLessThanOperator,
 ]);
@@ -333,15 +344,17 @@ export const LastPerformedSegmentNode = Type.Object({
       },
     ),
   ),
-  hasProperties: Type.Array(
-    Type.Object({
-      path: Type.String(),
-      operator: SegmentOperator,
-    }),
-    {
-      description:
-        "Used to evaluate whether the user is in the segment based on the properties of the selected event.",
-    },
+  hasProperties: Type.Optional(
+    Type.Array(
+      Type.Object({
+        path: Type.String(),
+        operator: SegmentOperator,
+      }),
+      {
+        description:
+          "Used to evaluate whether the user is in the segment based on the properties of the selected event.",
+      },
+    ),
   ),
 });
 
@@ -469,26 +482,46 @@ export enum UserPropertyDefinitionType {
   File = "File",
 }
 
-export const TraitUserPropertyDefinition = Type.Object({
-  // set to optional for backwards compatibility
-  id: Type.Optional(Type.String()),
-  type: Type.Literal(UserPropertyDefinitionType.Trait),
-  path: Type.String(),
-});
+export const TraitUserPropertyDefinition = Type.Object(
+  {
+    // set to optional for backwards compatibility
+    id: Type.Optional(Type.String()),
+    type: Type.Literal(UserPropertyDefinitionType.Trait),
+    path: Type.String(),
+  },
+  {
+    title: "TraitUserPropertyDefinition",
+    description:
+      "A user property definition that resolves to a matching trait.",
+  },
+);
 
 export type TraitUserPropertyDefinition = Static<
   typeof TraitUserPropertyDefinition
 >;
 
-export const IdUserPropertyDefinition = Type.Object({
-  type: Type.Literal(UserPropertyDefinitionType.Id),
-});
+export const IdUserPropertyDefinition = Type.Object(
+  {
+    type: Type.Literal(UserPropertyDefinitionType.Id),
+  },
+  {
+    title: "IdUserPropertyDefinition",
+    description: "A user property definition that resolves to a user's id.",
+  },
+);
 
 export type IdUserPropertyDefinition = Static<typeof IdUserPropertyDefinition>;
 
-export const AnonymousIdUserPropertyDefinition = Type.Object({
-  type: Type.Literal(UserPropertyDefinitionType.AnonymousId),
-});
+export const AnonymousIdUserPropertyDefinition = Type.Object(
+  {
+    type: Type.Literal(UserPropertyDefinitionType.AnonymousId),
+  },
+  {
+    title: "AnonymousIdUserPropertyDefinition",
+    description:
+      "A user property definition that resolves to a user's anonymous id.",
+  },
+);
 
 export type AnonymousIdUserPropertyDefinition = Static<
   typeof AnonymousIdUserPropertyDefinition
@@ -507,41 +540,61 @@ export const UserPropertyOperator = Type.Union([UserPropertyEqualsOperator]);
 
 export type UserPropertyOperator = Static<typeof UserPropertyOperator>;
 
-export const PerformedUserPropertyDefinition = Type.Object({
-  // set to optional for backwards compatibility
-  id: Type.Optional(Type.String()),
-  type: Type.Literal(UserPropertyDefinitionType.Performed),
-  event: Type.String(),
-  path: Type.String(),
-  properties: Type.Optional(
-    Type.Array(
-      Type.Object({
-        path: Type.String(),
-        operator: UserPropertyOperator,
-      }),
+export const PerformedUserPropertyDefinition = Type.Object(
+  {
+    // set to optional for backwards compatibility
+    id: Type.Optional(Type.String()),
+    type: Type.Literal(UserPropertyDefinitionType.Performed),
+    event: Type.String(),
+    path: Type.String(),
+    properties: Type.Optional(
+      Type.Array(
+        Type.Object({
+          path: Type.String(),
+          operator: UserPropertyOperator,
+        }),
+      ),
     ),
-  ),
-});
+  },
+  {
+    title: "PerformedUserPropertyDefinition",
+    description:
+      "A user property definition that renders the last matching track event.",
+  },
+);
 
 export type PerformedUserPropertyDefinition = Static<
   typeof PerformedUserPropertyDefinition
 >;
 
-export const PerformedManyUserPropertyDefinition = Type.Object({
-  id: Type.Optional(Type.String()),
-  type: Type.Literal(UserPropertyDefinitionType.PerformedMany),
-  or: Type.Array(Type.Object({ event: Type.String() })),
-});
+export const PerformedManyUserPropertyDefinition = Type.Object(
+  {
+    id: Type.Optional(Type.String()),
+    type: Type.Literal(UserPropertyDefinitionType.PerformedMany),
+    or: Type.Array(Type.Object({ event: Type.String() })),
+  },
+  {
+    title: "PerformedManyUserPropertyDefinition",
+    description:
+      "A user property definition that renders all matching track events.",
+  },
+);
 
 export type PerformedManyUserPropertyDefinition = Static<
   typeof PerformedManyUserPropertyDefinition
 >;
 
-export const FileUserPropertyDefinition = Type.Object({
-  id: Type.Optional(Type.String()),
-  type: Type.Literal(UserPropertyDefinitionType.File),
-  name: Type.String(),
-});
+export const FileUserPropertyDefinition = Type.Object(
+  {
+    id: Type.Optional(Type.String()),
+    type: Type.Literal(UserPropertyDefinitionType.File),
+    name: Type.String(),
+  },
+  {
+    title: "FileUserPropertyDefinition",
+    description: "A user property definition that resolves to a file.",
+  },
+);
 
 export type FileUserPropertyDefinition = Static<
   typeof FileUserPropertyDefinition
@@ -573,81 +626,123 @@ export const PerformedManyValue = Type.Array(PerformedManyValueItem);
 
 export type PerformedManyValue = Static<typeof PerformedManyValue>;
 
-export const AnyOfUserPropertyDefinition = Type.Object({
-  id: Type.String(),
-  type: Type.Literal(UserPropertyDefinitionType.AnyOf),
-  children: Type.Array(Type.String()),
-});
+export const AnyOfUserPropertyDefinition = Type.Object(
+  {
+    id: Type.String(),
+    type: Type.Literal(UserPropertyDefinitionType.AnyOf),
+    children: Type.Array(Type.String()),
+  },
+  {
+    title: "AnyOfUserPropertyDefinition",
+    description:
+      "A user property definition that resolves to the first matching user property definition.",
+  },
+);
 
 export type AnyOfUserPropertyDefinition = Static<
   typeof AnyOfUserPropertyDefinition
 >;
 
-export const GroupParentUserPropertyDefinitions = Type.Union([
-  AnyOfUserPropertyDefinition,
-]);
+export const GroupParentUserPropertyDefinitions = Type.Union(
+  [AnyOfUserPropertyDefinition],
+  {
+    title: "GroupParentUserPropertyDefinitions",
+    description:
+      "A user property definition that is a parent of other user property definitions.",
+  },
+);
 
 export type GroupParentUserPropertyDefinitions = Static<
   typeof GroupParentUserPropertyDefinitions
 >;
 
-export const KeyedPerformedUserPropertyDefinition = Type.Object({
-  id: Type.Optional(Type.String()),
-  type: Type.Literal(UserPropertyDefinitionType.KeyedPerformed),
-  event: Type.String(),
-  path: Type.String(),
-  key: Type.String(),
-  properties: Type.Optional(
-    Type.Array(
-      Type.Object({
-        path: Type.String(),
-        operator: UserPropertyOperator,
-      }),
+export const KeyedPerformedUserPropertyDefinition = Type.Object(
+  {
+    id: Type.Optional(Type.String()),
+    type: Type.Literal(UserPropertyDefinitionType.KeyedPerformed),
+    event: Type.String(),
+    path: Type.String(),
+    key: Type.String(),
+    properties: Type.Optional(
+      Type.Array(
+        Type.Object({
+          path: Type.String(),
+          operator: UserPropertyOperator,
+        }),
+      ),
     ),
-  ),
-});
+  },
+  {
+    title: "KeyedPerformedUserPropertyDefinition",
+    description:
+      "A user property definition that renders the last matching track event with a given key. Used in event entry journeys.",
+  },
+);
 
 export type KeyedPerformedUserPropertyDefinition = Static<
   typeof KeyedPerformedUserPropertyDefinition
 >;
 
-export const LeafUserPropertyDefinition = Type.Union([
-  TraitUserPropertyDefinition,
-  PerformedUserPropertyDefinition,
-  FileUserPropertyDefinition,
-  KeyedPerformedUserPropertyDefinition,
-]);
+export const LeafUserPropertyDefinition = Type.Union(
+  [
+    TraitUserPropertyDefinition,
+    PerformedUserPropertyDefinition,
+    FileUserPropertyDefinition,
+    KeyedPerformedUserPropertyDefinition,
+  ],
+  {
+    title: "LeafUserPropertyDefinition",
+    description: "Child of a group user property definition.",
+  },
+);
 
 export type LeafUserPropertyDefinition = Static<
   typeof LeafUserPropertyDefinition
 >;
 
-export const GroupChildrenUserPropertyDefinitions = Type.Union([
-  GroupParentUserPropertyDefinitions,
-  LeafUserPropertyDefinition,
-]);
+export const GroupChildrenUserPropertyDefinitions = Type.Union(
+  [GroupParentUserPropertyDefinitions, LeafUserPropertyDefinition],
+  {
+    title: "GroupChildrenUserPropertyDefinitions",
+    description:
+      "A user property definition that is a child of a group user property definition.",
+  },
+);
 
 export type GroupChildrenUserPropertyDefinitions = Static<
   typeof GroupChildrenUserPropertyDefinitions
 >;
 
-export const GroupUserPropertyDefinition = Type.Object({
-  type: Type.Literal(UserPropertyDefinitionType.Group),
-  entry: Type.String(),
-  nodes: Type.Array(GroupChildrenUserPropertyDefinitions),
-});
+export const GroupUserPropertyDefinition = Type.Object(
+  {
+    type: Type.Literal(UserPropertyDefinitionType.Group),
+    entry: Type.String(),
+    nodes: Type.Array(GroupChildrenUserPropertyDefinitions),
+  },
+  {
+    title: "GroupUserPropertyDefinition",
+    description:
+      "A user property definition that is a parent of other user property definitions.",
+  },
+);
 
 export type GroupUserPropertyDefinition = Static<
   typeof GroupUserPropertyDefinition
 >;
 
-export const UserPropertyDefinition = Type.Union([
-  IdUserPropertyDefinition,
-  AnonymousIdUserPropertyDefinition,
-  GroupUserPropertyDefinition,
-  LeafUserPropertyDefinition,
-  PerformedManyUserPropertyDefinition,
-]);
+export const UserPropertyDefinition = Type.Union(
+  [
+    IdUserPropertyDefinition,
+    AnonymousIdUserPropertyDefinition,
+    GroupUserPropertyDefinition,
+    LeafUserPropertyDefinition,
+    PerformedManyUserPropertyDefinition,
+  ],
+  {
+    title: "UserPropertyDefinition",
+    description: "A user property definition.",
+  },
+);
 
 export type UserPropertyDefinition = Static<typeof UserPropertyDefinition>;
 
@@ -836,11 +931,64 @@ export const MobilePushMessageVariant = Type.Object({
 
 export type MobilePushMessageVariant = Static<typeof MobilePushMessageVariant>;
 
-export const SmsMessageVariant = Type.Object({
+export enum TwilioSenderOverrideType {
+  MessageSid = "MessageSid",
+  PhoneNumber = "PhoneNumber",
+}
+
+export const TwilioSenderOverride = Type.Union([
+  Type.Object({
+    type: Type.Literal(TwilioSenderOverrideType.MessageSid),
+    messagingServiceSid: Type.String(),
+  }),
+  Type.Object({
+    type: Type.Literal(TwilioSenderOverrideType.PhoneNumber),
+    phone: Type.String(),
+  }),
+]);
+
+export type TwilioSenderOverride = Static<typeof TwilioSenderOverride>;
+
+const BaseSmsMessageVariant = Type.Object({
   type: Type.Literal(ChannelType.Sms),
   templateId: Type.String(),
-  providerOverride: Type.Optional(Type.Enum(SmsProviderType)),
 });
+
+export const NoSmsProviderOverride = Type.Object({
+  // Provider override has to be nullable to be compatible with JSON schema
+  providerOverride: Type.Optional(Type.Null()),
+  senderOverride: Type.Optional(Type.Null()),
+});
+
+export type NoSmsProviderOverride = Static<typeof NoSmsProviderOverride>;
+
+export const TwilioOverride = Type.Object({
+  providerOverride: Type.Literal(SmsProviderType.Twilio),
+  senderOverride: Type.Optional(TwilioSenderOverride),
+});
+
+export type TwilioOverride = Static<typeof TwilioOverride>;
+
+export const TestSmsOverride = Type.Object({
+  providerOverride: Type.Literal(SmsProviderType.Test),
+  senderOverride: Type.Optional(Type.Null()),
+});
+
+export type TestSmsOverride = Static<typeof TestSmsOverride>;
+
+export const SmsProviderOverride = Type.Union([
+  NoSmsProviderOverride,
+  TwilioOverride,
+  TestSmsOverride,
+]);
+
+export type SmsProviderOverride = Static<typeof SmsProviderOverride>;
+
+export const SmsMessageVariant = Type.Union([
+  Type.Composite([BaseSmsMessageVariant, NoSmsProviderOverride]),
+  Type.Composite([BaseSmsMessageVariant, TwilioOverride]),
+  Type.Composite([BaseSmsMessageVariant, TestSmsOverride]),
+]);
 
 export type SmsMessageVariant = Static<typeof SmsMessageVariant>;
 
@@ -1037,11 +1185,24 @@ export const TriggerBroadcastRequest = Type.Object({
 export type TriggerBroadcastRequest = Static<typeof TriggerBroadcastRequest>;
 
 export const UpsertSegmentResource = Type.Intersect([
-  Type.Omit(Type.Partial(SegmentResource), ["id"]),
-  Type.Pick(SegmentResource, ["id"]),
+  Type.Omit(Type.Partial(SegmentResource), ["workspaceId", "name"]),
+  Type.Pick(SegmentResource, ["workspaceId", "name"]),
 ]);
 
 export type UpsertSegmentResource = Static<typeof UpsertSegmentResource>;
+
+export enum UpsertSegmentValidationErrorType {
+  IdError = "IdError",
+}
+
+export const UpsertSegmentValidationError = Type.Object({
+  type: Type.Enum(UpsertSegmentValidationErrorType),
+  message: Type.String(),
+});
+
+export type UpsertSegmentValidationError = Static<
+  typeof UpsertSegmentValidationError
+>;
 
 export const DeleteSegmentRequest = Type.Object({
   workspaceId: Type.String(),
@@ -1082,8 +1243,8 @@ export const GetEventsRequest = Type.Object({
   workspaceId: Type.String(),
   searchTerm: Type.Optional(Type.String()),
   userId: Type.Optional(UserId),
-  offset: Type.Number(),
-  limit: Type.Number(),
+  offset: Type.Optional(Type.Number()),
+  limit: Type.Optional(Type.Number()),
   startDate: Type.Optional(Type.Number()),
   endDate: Type.Optional(Type.Number()),
 });
@@ -1173,6 +1334,7 @@ export const BaseEmailContents = Type.Object({
   from: Type.String(),
   subject: Type.String(),
   replyTo: Type.Optional(Type.String()),
+  name: Type.Optional(Type.String()),
   headers: Type.Optional(
     Type.Array(
       Type.Object({
@@ -1394,15 +1556,28 @@ export type NarrowedMessageTemplateResource<
 };
 
 export const UpsertMessageTemplateResource = Type.Object({
-  workspaceId: Type.Optional(Type.String()),
-  id: Type.String(),
-  name: Type.Optional(Type.String()),
+  workspaceId: Type.String(),
+  id: Type.Optional(Type.String()),
+  name: Type.String(),
   definition: Type.Optional(MessageTemplateResourceDefinition),
   draft: Type.Optional(Nullable(MessageTemplateResourceDraft)),
 });
 
 export type UpsertMessageTemplateResource = Static<
   typeof UpsertMessageTemplateResource
+>;
+
+export enum UpsertMessageTemplateValidationErrorType {
+  IdError = "IdError",
+}
+
+export const UpsertMessageTemplateValidationError = Type.Object({
+  type: Type.Enum(UpsertMessageTemplateValidationErrorType),
+  message: Type.String(),
+});
+
+export type UpsertMessageTemplateValidationError = Static<
+  typeof UpsertMessageTemplateValidationError
 >;
 
 export const GetMessageTemplatesRequest = Type.Object(
@@ -1445,7 +1620,7 @@ export type GetSegmentsResponse = Static<typeof GetSegmentsResponse>;
 
 export const ResetMessageTemplateResource = Type.Object({
   workspaceId: Type.String(),
-  id: Type.String(),
+  name: Type.String(),
   journeyMetadata: Type.Optional(
     Type.Object({
       journeyId: Type.String(),
@@ -1632,6 +1807,13 @@ export type DeepPartial<T> = T extends object
     }
   : T;
 
+export const WorkspaceStatusDb = Type.Union([
+  Type.Literal("Active"),
+  Type.Literal("Tombstoned"),
+]);
+
+export type WorkspaceStatusDb = Static<typeof WorkspaceStatusDb>;
+
 export const WorkspaceResource = Type.Object({
   id: Type.String(),
   name: Type.String(),
@@ -1647,6 +1829,19 @@ export const DefaultEmailProviderResource = Type.Object({
 
 export type DefaultEmailProviderResource = Static<
   typeof DefaultEmailProviderResource
+>;
+
+export const UpsertDefaultEmailProviderRequest = Type.Union([
+  DefaultEmailProviderResource,
+  Type.Object({
+    workspaceId: Type.String(),
+    emailProvider: Type.String(),
+    fromAddress: Nullable(Type.String()),
+  }),
+]);
+
+export type UpsertDefaultEmailProviderRequest = Static<
+  typeof UpsertDefaultEmailProviderRequest
 >;
 
 export const JourneyResourceStatusEnum = {
@@ -2008,7 +2203,7 @@ export const UpsertJourneyResource = Type.Composite([
     ),
   ),
   Type.Object({
-    id: Type.String(),
+    name: Type.String(),
     workspaceId: Type.String(),
     draft: Type.Optional(Nullable(JourneyDraft)),
   }),
@@ -2067,8 +2262,8 @@ export type SavedUserPropertyResource = Static<
 >;
 
 export const UpsertUserPropertyResource = Type.Intersect([
-  Type.Omit(Type.Partial(UserPropertyResource), ["id", "name"]),
-  Type.Pick(UserPropertyResource, ["id", "name"]),
+  Type.Omit(Type.Partial(UserPropertyResource), ["name"]),
+  Type.Pick(UserPropertyResource, ["name", "workspaceId"]),
 ]);
 
 export type UpsertUserPropertyResource = Static<
@@ -3071,15 +3266,6 @@ export const PersistedSmsProvider = Type.Union([
 
 export type PersistedSmsProvider = Static<typeof PersistedSmsProvider>;
 
-export const UpsertSmsProviderRequest = Type.Object({
-  workspaceId: Type.String(),
-  setDefault: Type.Optional(Type.Boolean()),
-  type: Type.Optional(Type.Enum(SmsProviderType)),
-  secret: Type.Omit(SmsProviderSecret, ["type"]),
-});
-
-export type UpsertSmsProviderRequest = Static<typeof UpsertSmsProviderRequest>;
-
 export const DefaultSmsProviderResource = Type.Object({
   workspaceId: Type.String(),
   smsProviderId: Type.String(),
@@ -3188,6 +3374,14 @@ export const MessageEmailSuccess = Type.Composite([
     provider: EmailServiceProviderSuccess,
     to: Type.String(),
     headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+    attachments: Type.Optional(
+      Type.Array(
+        Type.Object({
+          mimeType: Type.String(),
+          name: Type.String(),
+        }),
+      ),
+    ),
   }),
   Type.Omit(CodeEmailContents, ["headers"]),
 ]);
@@ -3575,7 +3769,7 @@ export const SearchDeliveriesRequest = Type.Object({
   fromIdentifier: Type.Optional(Type.String()),
   toIdentifier: Type.Optional(Type.String()),
   journeyId: Type.Optional(Type.String()),
-  userId: Type.Optional(UserId),
+  userId: Type.Optional(Type.Union([UserId, Type.Array(UserId)])),
   channels: Type.Optional(Type.Array(Type.Enum(ChannelType))),
   limit: Type.Optional(Type.Number()),
   cursor: Type.Optional(Type.String()),
@@ -3676,6 +3870,7 @@ export const AmazonSesMailFields = Type.Object({
   to: Type.String(),
   subject: Type.String(),
   html: Type.String(),
+  name: Type.Optional(Type.String()),
   replyTo: Type.Optional(Type.String()),
   tags: Type.Optional(Type.Record(Type.String(), Type.Array(Type.String()))),
   headers: Type.Optional(Type.Record(Type.String(), Type.String())),
@@ -3836,6 +4031,7 @@ export type JourneyConstraintViolation = Static<
 
 export enum JourneyUpsertValidationErrorType {
   ConstraintViolation = "ConstraintViolation",
+  IdError = "IdError",
 }
 
 export const JourneyUpsertValidationConstraintViolationError = Type.Object({
@@ -3847,8 +4043,16 @@ export type JourneyUpsertValidationConstraintViolationError = Static<
   typeof JourneyUpsertValidationConstraintViolationError
 >;
 
+export const JourneyUpsertIdError = Type.Object({
+  type: Type.Literal(JourneyUpsertValidationErrorType.IdError),
+  message: Type.String(),
+});
+
+export type JourneyUpsertIdError = Static<typeof JourneyUpsertIdError>;
+
 export const JourneyUpsertValidationErrorVariant = Type.Union([
   JourneyUpsertValidationConstraintViolationError,
+  JourneyUpsertIdError,
 ]);
 
 export type JourneyUpsertValidationErrorVariant = Static<
@@ -3933,6 +4137,7 @@ export type GetUserSubscriptionsResponse = Static<
 
 export enum CreateWorkspaceErrorType {
   WorkspaceAlreadyExists = "WorkspaceAlreadyExists",
+  WorkspaceNameViolation = "WorkspaceNameViolation",
   InvalidDomain = "InvalidDomain",
 }
 
@@ -3942,6 +4147,15 @@ export const CreateWorkspaceAlreadyExistsError = Type.Object({
 
 export type CreateWorkspaceAlreadyExistsError = Static<
   typeof CreateWorkspaceAlreadyExistsError
+>;
+
+export const CreateWorkspaceNameViolationError = Type.Object({
+  type: Type.Literal(CreateWorkspaceErrorType.WorkspaceNameViolation),
+  message: Type.String(),
+});
+
+export type CreateWorkspaceNameViolationError = Static<
+  typeof CreateWorkspaceNameViolationError
 >;
 
 export const CreateWorkspaceInvalidDomainError = Type.Object({
@@ -3955,6 +4169,7 @@ export type CreateWorkspaceInvalidDomainError = Static<
 export const CreateWorkspaceError = Type.Union([
   CreateWorkspaceAlreadyExistsError,
   CreateWorkspaceInvalidDomainError,
+  CreateWorkspaceNameViolationError,
 ]);
 
 export type CreateWorkspaceError = Static<typeof CreateWorkspaceError>;
@@ -3974,6 +4189,7 @@ export const WorkspaceResourceExtended = Type.Composite([
     type: WorkspaceTypeApp,
     writeKey: Type.String(),
     domain: Type.Optional(Type.String()),
+    status: WorkspaceStatusDb,
   }),
 ]);
 
@@ -4037,6 +4253,37 @@ export type OptionalAllOrNothing<T, E> = T & (E | EmptyObject);
 export type MakeRequired<T, K extends keyof T> = Omit<T, K> &
   Required<Pick<T, K>>;
 
-export type WorkspaceIdentifier =
-  | { workspaceId: string }
-  | { externalId: string };
+export const WorkspaceIdentifier = Type.Union([
+  Type.Object({
+    workspaceId: Type.String(),
+  }),
+  Type.Object({
+    externalId: Type.String(),
+  }),
+]);
+
+export type WorkspaceIdentifier = Static<typeof WorkspaceIdentifier>;
+
+export const UpsertEmailProviderRequest = Type.Object({
+  workspaceId: Type.String(),
+  setDefault: Type.Optional(Type.Boolean()),
+  config: EmailProviderSecret,
+});
+
+export type UpsertEmailProviderRequest = Static<
+  typeof UpsertEmailProviderRequest
+>;
+
+export const UpsertSmsProviderRequest = Type.Object({
+  workspaceId: Type.String(),
+  setDefault: Type.Optional(Type.Boolean()),
+  config: SmsProviderSecret,
+});
+
+export type UpsertSmsProviderRequest = Static<typeof UpsertSmsProviderRequest>;
+
+export const TombstoneWorkspaceRequest = WorkspaceIdentifier;
+
+export type TombstoneWorkspaceRequest = Static<
+  typeof TombstoneWorkspaceRequest
+>;

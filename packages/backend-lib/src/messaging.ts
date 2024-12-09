@@ -10,10 +10,12 @@ import {
   jsonParseSafe,
   schemaValidateWithErr,
 } from "isomorphic-lib/src/resultHandling/schemaValidation";
+import { assertUnreachable } from "isomorphic-lib/src/typeAssertions";
 import { err, ok, Result } from "neverthrow";
 import { Message as PostMarkRequiredFields } from "postmark";
 import * as R from "remeda";
 import { Overwrite } from "utility-types";
+import { validate as validateUuid } from "uuid";
 
 import { getObject, storage } from "./blobStorage";
 import { sendMail as sendMailAmazonSes } from "./destinations/amazonses";
@@ -28,13 +30,17 @@ import {
   sendMail as sendMailSmtp,
   SendSmtpMailParams,
 } from "./destinations/smtp";
-import { sendSms as sendSmsTwilio } from "./destinations/twilio";
+import {
+  Sender as TwilioSender,
+  sendSms as sendSmsTwilio,
+} from "./destinations/twilio";
 import { renderLiquid } from "./liquid";
 import logger from "./logger";
 import {
   constructUnsubscribeHeaders,
   UnsubscribeHeaders,
 } from "./messaging/email";
+import { withSpan } from "./openTelemetry";
 import prisma from "./prisma";
 import {
   inSubscriptionGroup,
@@ -64,9 +70,11 @@ import {
   Prisma,
   Secret,
   SmsProvider,
+  SmsProviderOverride,
   SmsProviderSecret,
   SmsProviderType,
   TwilioSecret,
+  TwilioSenderOverrideType,
   UpsertMessageTemplateResource,
   WebhookConfig,
   WebhookResponse,
@@ -128,6 +136,10 @@ export async function findMessageTemplate({
   id: string;
   channel: ChannelType;
 }): Promise<Result<MessageTemplateResource | null, Error>> {
+  if (!validateUuid(id)) {
+    logger().info({ id, channel }, "Invalid message template id");
+    return ok(null);
+  }
   const template = await prisma().messageTemplate.findUnique({
     where: {
       id,
@@ -146,43 +158,32 @@ export async function findMessageTemplate({
 export async function upsertMessageTemplate(
   data: UpsertMessageTemplateResource,
 ): Promise<MessageTemplateResource> {
-  let messageTemplate: MessageTemplate;
   const draft = data.draft === null ? Prisma.DbNull : data.draft;
+  const where: Prisma.MessageTemplateWhereUniqueInput = data.id
+    ? { id: data.id }
+    : {
+        workspaceId_name: {
+          workspaceId: data.workspaceId,
+          name: data.name,
+        },
+      };
 
-  if (data.name && data.workspaceId) {
-    messageTemplate = await prisma().messageTemplate.upsert({
-      where: {
-        id: data.id,
-      },
-      create: {
-        workspaceId: data.workspaceId,
-        name: data.name,
-        id: data.id,
-        definition: data.definition,
-        draft,
-      },
-      update: {
-        workspaceId: data.workspaceId,
-        name: data.name,
-        id: data.id,
-        definition: data.definition,
-        draft,
-      },
-    });
-  } else {
-    messageTemplate = await prisma().messageTemplate.update({
-      where: {
-        id: data.id,
-      },
-      data: {
-        workspaceId: data.workspaceId,
-        name: data.name,
-        id: data.id,
-        definition: data.definition,
-        draft,
-      },
-    });
-  }
+  const messageTemplate = await prisma().messageTemplate.upsert({
+    where,
+    create: {
+      workspaceId: data.workspaceId,
+      name: data.name,
+      id: data.id,
+      definition: data.definition,
+      draft,
+    },
+    update: {
+      name: data.name,
+      definition: data.definition,
+      draft,
+    },
+  });
+
   return unwrap(enrichMessageTemplate(messageTemplate));
 }
 
@@ -349,11 +350,11 @@ export interface SendMessageParametersEmail extends SendMessageParametersBase {
   providerOverride?: EmailProviderType;
 }
 
-export interface SendMessageParametersSms extends SendMessageParametersBase {
-  channel: (typeof ChannelType)["Sms"];
-  providerOverride?: SmsProviderType;
-  disableCallback?: boolean;
-}
+export type SendMessageParametersSms = SendMessageParametersBase &
+  SmsProviderOverride & {
+    channel: (typeof ChannelType)["Sms"];
+    disableCallback?: boolean;
+  };
 
 export interface SendMessageParametersMobilePush
   extends SendMessageParametersBase {
@@ -498,6 +499,19 @@ function getMessageFileId({
 }
 
 type EmailProviderPayload = (EmailProvider & { secret: Secret | null }) | null;
+
+function getWebsiteFromFromEmail(from: string): string | null {
+  const fromParts = from.split("@");
+  if (fromParts.length !== 2 || !fromParts[1]) {
+    return null;
+  }
+  try {
+    return new URL(`https://${fromParts[1]}`).origin;
+  } catch (error) {
+    logger().info({ err: error }, "error getting website from from email");
+    return null;
+  }
+}
 
 async function getEmailProviderForWorkspace({
   providerOverride,
@@ -645,6 +659,9 @@ export async function sendEmail({
       replyTo: {
         contents: messageTemplateDefinition.replyTo,
       },
+      name: {
+        contents: messageTemplateDefinition.name,
+      },
     },
     secrets: subscriptionGroupSecret
       ? {
@@ -679,9 +696,11 @@ export async function sendEmail({
     subject,
     body,
     replyTo: baseReplyTo,
+    name: baseName,
   } = renderedValuesResult.value;
   // don't pass an empty string for reply to values
   const replyTo = !baseReplyTo?.length ? undefined : baseReplyTo;
+  const emailName = !baseName?.length ? undefined : baseName;
   const to = identifier;
 
   let customHeaders: Record<string, string> | undefined;
@@ -820,6 +839,11 @@ export async function sendEmail({
 
     attachments = (await Promise.all(attachmentPromises)).flat();
   }
+  // To set on the message sent event
+  const attachmentsSent = attachments?.map(({ name, mimeType }) => ({
+    name,
+    mimeType,
+  }));
 
   switch (emailProvider.type) {
     case EmailProviderType.Smtp: {
@@ -866,6 +890,7 @@ export async function sendEmail({
         to,
         subject,
         replyTo,
+        name: emailName,
         body,
         host,
         port: numPort,
@@ -891,6 +916,8 @@ export async function sendEmail({
           subject,
           headers,
           replyTo,
+          name: emailName,
+          attachments: attachmentsSent,
           provider: {
             type: EmailProviderType.Smtp,
             messageId: result.value.messageId,
@@ -922,7 +949,10 @@ export async function sendEmail({
         }));
       const mailData: MailDataRequired = {
         to,
-        from,
+        from: {
+          email: from,
+          name: emailName,
+        },
         subject,
         html: body,
         replyTo,
@@ -974,6 +1004,8 @@ export async function sendEmail({
           subject,
           headers,
           replyTo,
+          name: emailName,
+          attachments: attachmentsSent,
           provider: {
             type: EmailProviderType.Sendgrid,
           },
@@ -994,6 +1026,7 @@ export async function sendEmail({
       const mailData: Parameters<typeof sendMailAmazonSes>[0]["mailData"] = {
         to,
         from,
+        name: emailName,
         subject,
         html: body,
         replyTo,
@@ -1050,6 +1083,7 @@ export async function sendEmail({
           subject,
           headers,
           replyTo,
+          name: emailName,
           provider: {
             type: EmailProviderType.AmazonSes,
             messageId: result.value.MessageId,
@@ -1075,9 +1109,10 @@ export async function sendEmail({
           filename: attachment.name,
           content: attachment.data,
         }));
+      const fromWithName = emailName ? `${emailName} <${from}>` : from;
       const mailData: ResendRequiredData = {
         to,
-        from,
+        from: fromWithName,
         subject,
         html: body,
         reply_to: replyTo,
@@ -1124,11 +1159,13 @@ export async function sendEmail({
         variant: {
           type: ChannelType.Email,
           from,
+          name: emailName,
           body,
           to,
           headers,
           subject,
           replyTo,
+          attachments: attachmentsSent,
           provider: {
             type: EmailProviderType.Resend,
           },
@@ -1159,9 +1196,10 @@ export async function sendEmail({
               }),
             }))
           : [];
+      const fromWithName = emailName ? `${emailName} <${from}>` : from;
       const mailData: PostMarkRequiredFields = {
         To: to,
-        From: from,
+        From: fromWithName,
         Subject: subject,
         HtmlBody: body,
         ReplyTo: replyTo,
@@ -1215,11 +1253,13 @@ export async function sendEmail({
         variant: {
           type: ChannelType.Email,
           from,
+          name: emailName,
           body,
           to,
           subject,
           replyTo,
           headers,
+          attachments: attachmentsSent,
           provider: {
             type: EmailProviderType.PostMark,
           },
@@ -1229,12 +1269,17 @@ export async function sendEmail({
 
     case EmailProviderType.MailChimp: {
       // Mandatory for Mailchimp
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const website = new URL(`https://${from.split("@")[1]!}`).origin;
+      const website = getWebsiteFromFromEmail(from) ?? "https://dittofeed.com";
       const mailData: MessagesMessage = {
         html: body,
         text: body,
+        from_name: emailName,
         subject,
+        attachments: attachments?.map(({ name, data, mimeType }) => ({
+          type: mimeType,
+          name,
+          content: data,
+        })),
         from_email: from,
         to: [{ email: to }],
         metadata: {
@@ -1270,14 +1315,23 @@ export async function sendEmail({
       });
 
       if (result.isErr()) {
+        let name: string;
+        let message: string;
+        if (result.error instanceof AxiosError) {
+          name = result.error.code?.toString() ?? "Unknown";
+          message = result.error.message;
+        } else {
+          name = result.error.status;
+          message = result.error.reject_reason;
+        }
         return err({
           type: InternalEventType.MessageFailure,
           variant: {
             type: ChannelType.Email,
             provider: {
               type: EmailProviderType.MailChimp,
-              name: result.error.code?.toString() ?? "Unknown",
-              message: result.error.message,
+              name,
+              message,
             },
           },
         });
@@ -1289,10 +1343,12 @@ export async function sendEmail({
           type: ChannelType.Email,
           from,
           body,
+          name: emailName,
           to,
           subject,
           replyTo,
           headers,
+          attachments: attachmentsSent,
           provider: {
             type: EmailProviderType.MailChimp,
           },
@@ -1311,6 +1367,7 @@ export async function sendEmail({
           subject,
           replyTo,
           headers,
+          attachments: attachmentsSent,
           provider: {
             type: EmailProviderType.Test,
           },
@@ -1327,20 +1384,20 @@ export async function sendEmail({
   }
 }
 
-export async function sendSms({
-  workspaceId,
-  templateId,
-  userPropertyAssignments,
-  subscriptionGroupDetails,
-  useDraft,
-  providerOverride,
-  userId,
-  messageTags,
-  disableCallback = false,
-}: Omit<
-  SendMessageParametersSms,
-  "channel"
->): Promise<BackendMessageSendResult> {
+export async function sendSms(
+  params: Omit<SendMessageParametersSms, "channel">,
+): Promise<BackendMessageSendResult> {
+  const {
+    workspaceId,
+    templateId,
+    userPropertyAssignments,
+    subscriptionGroupDetails,
+    useDraft,
+    providerOverride,
+    userId,
+    messageTags,
+    disableCallback = false,
+  } = params;
   const [getSendModelsResult, smsProvider] = await Promise.all([
     getSendMessageModels({
       workspaceId,
@@ -1351,7 +1408,8 @@ export async function sendSms({
     }),
     getSmsProvider({
       workspaceId,
-      providerOverride,
+      // Provider override has to be nullable to be compatible with JSON schema
+      providerOverride: providerOverride ?? undefined,
     }),
   ]);
   if (getSendModelsResult.isErr()) {
@@ -1448,8 +1506,21 @@ export async function sendSms({
 
   switch (smsProvider.type) {
     case SmsProviderType.Twilio: {
-      const { accountSid, authToken, messagingServiceSid } =
-        parsedConfigResult.value as TwilioSecret;
+      const configResult = schemaValidateWithErr(
+        parsedConfigResult.value,
+        TwilioSecret,
+      );
+      if (configResult.isErr()) {
+        return err({
+          type: InternalEventType.BadWorkspaceConfiguration,
+          variant: {
+            type: BadWorkspaceConfigurationType.MessageServiceProviderMisconfigured,
+            message: configResult.error.message,
+          },
+        });
+      }
+
+      const { accountSid, authToken, messagingServiceSid } = configResult.value;
 
       if (!accountSid || !authToken || !messagingServiceSid) {
         return err({
@@ -1460,17 +1531,39 @@ export async function sendSms({
           },
         });
       }
+      let sender: TwilioSender;
+      const { senderOverride } = params;
+      if (providerOverride === SmsProviderType.Twilio && senderOverride) {
+        switch (senderOverride.type) {
+          case TwilioSenderOverrideType.MessageSid:
+            sender = {
+              messagingServiceSid: senderOverride.messagingServiceSid,
+            };
+            break;
+          case TwilioSenderOverrideType.PhoneNumber:
+            sender = {
+              from: senderOverride.phone,
+            };
+            break;
+          default:
+            assertUnreachable(senderOverride);
+        }
+      } else {
+        sender = {
+          messagingServiceSid,
+        };
+      }
 
       const result = await sendSmsTwilio({
         body,
         accountSid,
         authToken,
         userId,
-        messagingServiceSid,
         subscriptionGroupId: subscriptionGroupDetails?.id,
         to,
         workspaceId,
         disableCallback,
+        ...sender,
       });
 
       if (result.isErr()) {
@@ -1732,15 +1825,24 @@ export type Sender = (
 export async function sendMessage(
   params: SendMessageParameters,
 ): Promise<BackendMessageSendResult> {
-  logger().debug({ params }, "sending message");
-  switch (params.channel) {
-    case ChannelType.Email:
-      return sendEmail(params);
-    case ChannelType.Sms:
-      return sendSms(params);
-    case ChannelType.MobilePush:
-      throw new Error("not implemented");
-    case ChannelType.Webhook:
-      return sendWebhook(params);
-  }
+  return withSpan({ name: "sendMessage" }, async (span) => {
+    span.setAttributes({
+      channel: params.channel,
+      workspaceId: params.workspaceId,
+      templateId: params.templateId,
+      journeyId: params.messageTags?.journeyId,
+      messageId: params.messageTags?.messageId,
+      nodeId: params.messageTags?.nodeId,
+    });
+    switch (params.channel) {
+      case ChannelType.Email:
+        return sendEmail(params);
+      case ChannelType.Sms:
+        return sendSms(params);
+      case ChannelType.MobilePush:
+        throw new Error("not implemented");
+      case ChannelType.Webhook:
+        return sendWebhook(params);
+    }
+  });
 }

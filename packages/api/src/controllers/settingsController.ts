@@ -2,10 +2,13 @@
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import { getOrCreateWriteKey, getWriteKeys } from "backend-lib/src/auth";
+import { upsertEmailProvider } from "backend-lib/src/messaging/email";
+import { upsertSmsProvider } from "backend-lib/src/messaging/sms";
 import prisma from "backend-lib/src/prisma";
 import { Prisma } from "backend-lib/src/types";
 import { FastifyInstance } from "fastify";
 import {
+  BadRequestResponse,
   DataSourceConfigurationResource,
   DataSourceVariantType,
   DefaultEmailProviderResource,
@@ -16,6 +19,9 @@ import {
   ListWriteKeyResource,
   PersistedSmsProvider,
   UpsertDataSourceConfigurationResource,
+  UpsertDefaultEmailProviderRequest,
+  UpsertEmailProviderRequest,
+  UpsertSmsProviderRequest,
   UpsertWriteKeyResource,
   WriteKeyResource,
 } from "isomorphic-lib/src/types";
@@ -26,7 +32,7 @@ export default async function settingsController(fastify: FastifyInstance) {
     "/data-sources",
     {
       schema: {
-        description: "Create or update email provider settings",
+        description: "Create or update data source settings",
         tags: ["Settings"],
         body: UpsertDataSourceConfigurationResource,
         response: {
@@ -110,33 +116,88 @@ export default async function settingsController(fastify: FastifyInstance) {
   );
 
   fastify.withTypeProvider<TypeBoxTypeProvider>().put(
+    "/email-providers",
+    {
+      schema: {
+        description: "Create or update email provider",
+        tags: ["Settings"],
+        body: UpsertEmailProviderRequest,
+        response: {
+          201: EmptyResponse,
+          400: BadRequestResponse,
+        },
+      },
+    },
+    async (request, reply) => {
+      await upsertEmailProvider(request.body);
+      return reply.status(201).send();
+    },
+  );
+
+  fastify.withTypeProvider<TypeBoxTypeProvider>().put(
+    "/sms-providers",
+    {
+      schema: {
+        description: "Create or update sms provider",
+        tags: ["Settings"],
+        body: UpsertSmsProviderRequest,
+        response: {
+          201: EmptyResponse,
+          400: BadRequestResponse,
+        },
+      },
+    },
+    async (request, reply) => {
+      await upsertSmsProvider(request.body);
+      return reply.status(201).send();
+    },
+  );
+
+  fastify.withTypeProvider<TypeBoxTypeProvider>().put(
     "/email-providers/default",
     {
       schema: {
         description: "Create or update email provider default",
         tags: ["Settings"],
-        body: DefaultEmailProviderResource,
+        body: UpsertDefaultEmailProviderRequest,
         response: {
           201: EmptyResponse,
+          400: BadRequestResponse,
         },
       },
     },
     async (request, reply) => {
-      const { workspaceId, emailProviderId, fromAddress } = request.body;
+      const { workspaceId, fromAddress } = request.body;
+      let resource: DefaultEmailProviderResource;
+      if ("emailProviderId" in request.body) {
+        resource = request.body;
+      } else {
+        const emailProvider = await prisma().emailProvider.findUnique({
+          where: {
+            workspaceId_type: {
+              workspaceId,
+              type: request.body.emailProvider,
+            },
+          },
+        });
+        if (!emailProvider) {
+          return reply.status(400).send({
+            message: "Invalid payload. Email provider not found.",
+          });
+        }
+        resource = {
+          workspaceId,
+          emailProviderId: emailProvider.id,
+          fromAddress,
+        };
+      }
 
       await prisma().defaultEmailProvider.upsert({
         where: {
           workspaceId,
         },
-        create: {
-          workspaceId,
-          emailProviderId,
-          fromAddress,
-        },
-        update: {
-          emailProviderId,
-          fromAddress,
-        },
+        create: resource,
+        update: resource,
       });
 
       return reply.status(201).send();

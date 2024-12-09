@@ -1,8 +1,10 @@
 import { Prisma, WorkspaceType } from "@prisma/client";
-import { WorkflowExecutionAlreadyStartedError } from "@temporalio/common";
 import { randomUUID } from "crypto";
 import { writeKeyToHeader } from "isomorphic-lib/src/auth";
-import { DEBUG_USER_ID1 } from "isomorphic-lib/src/constants";
+import {
+  DEBUG_USER_ID1,
+  WORKSPACE_TOMBSTONE_PREFIX,
+} from "isomorphic-lib/src/constants";
 import { err, ok } from "neverthrow";
 import { v5 as uuidv5 } from "uuid";
 
@@ -16,6 +18,8 @@ import { DEFAULT_WRITE_KEY_NAME } from "./constants";
 import { kafkaAdmin } from "./kafka";
 import logger from "./logger";
 import { upsertMessageTemplate } from "./messaging";
+import { getOrCreateEmailProviders } from "./messaging/email";
+import { getOrCreateSmsProviders } from "./messaging/sms";
 import prisma from "./prisma";
 import { prismaMigrate } from "./prisma/migrate";
 import {
@@ -30,8 +34,10 @@ import {
   ChannelType,
   CreateWorkspaceErrorType,
   CreateWorkspaceResult,
+  EmailProviderType,
   EventType,
   NodeEnvEnum,
+  SmsProviderType,
   SubscriptionGroupType,
   UserPropertyDefinitionType,
   Workspace,
@@ -62,6 +68,13 @@ export async function bootstrapPostgres({
   workspaceExternalId?: string;
   upsertWorkspace?: boolean;
 }): Promise<CreateWorkspaceResult> {
+  if (workspaceName.startsWith(WORKSPACE_TOMBSTONE_PREFIX)) {
+    return err({
+      type: CreateWorkspaceErrorType.WorkspaceNameViolation,
+      message: `Workspace name cannot start with ${WORKSPACE_TOMBSTONE_PREFIX}`,
+    });
+  }
+
   logger().info(
     {
       workspaceName,
@@ -210,10 +223,16 @@ export async function bootstrapPostgres({
       },
     ];
 
-  const [writeKeyResource] = await Promise.all([
+  const [writeKeyResource, smsProviders, emailProviders] = await Promise.all([
     getOrCreateWriteKey({
       workspaceId,
       writeKeyName: DEFAULT_WRITE_KEY_NAME,
+    }),
+    getOrCreateSmsProviders({
+      workspaceId,
+    }),
+    getOrCreateEmailProviders({
+      workspaceId,
     }),
     ...userProperties.map((up) =>
       prisma().userProperty.upsert({
@@ -234,6 +253,12 @@ export async function bootstrapPostgres({
       workspaceId,
     }).map(upsertMessageTemplate),
   ]);
+  const testEmailProvider = emailProviders.find(
+    (ep) => ep.type === EmailProviderType.Test,
+  );
+  const testSmsProvider = smsProviders.find(
+    (sp) => sp.type === SmsProviderType.Test,
+  );
 
   await Promise.all([
     upsertSubscriptionGroup({
@@ -257,6 +282,30 @@ export async function bootstrapPostgres({
       type: SubscriptionGroupType.OptOut,
       channel: ChannelType.Sms,
     }),
+    testEmailProvider
+      ? prisma().defaultEmailProvider.upsert({
+          where: {
+            workspaceId,
+          },
+          create: {
+            workspaceId,
+            emailProviderId: testEmailProvider.id,
+          },
+          update: {},
+        })
+      : undefined,
+    testSmsProvider
+      ? prisma().defaultSmsProvider.upsert({
+          where: {
+            workspaceId,
+          },
+          create: {
+            workspaceId,
+            smsProviderId: testSmsProvider.id,
+          },
+          update: {},
+        })
+      : undefined,
   ]);
   const writeKey = writeKeyToHeader({
     secretId: writeKeyResource.secretId,
@@ -267,6 +316,7 @@ export async function bootstrapPostgres({
     domain: workspace.domain ?? undefined,
     name: workspace.name,
     id: workspace.id,
+    status: workspace.status,
     type: workspace.type,
     writeKey,
   });
@@ -301,28 +351,6 @@ export async function bootstrapClickhouse() {
   await createUserEventsTables({
     ingressTopic: config().userEventsTopicName,
   });
-}
-
-export async function bootstrapWorker({
-  workspaceId,
-}: {
-  workspaceId: string;
-}) {
-  logger().info("Bootstrapping worker.");
-  try {
-    await startComputePropertiesWorkflow({ workspaceId });
-  } catch (e) {
-    const error = e as WorkflowExecutionAlreadyStartedError;
-    if (error instanceof WorkflowExecutionAlreadyStartedError) {
-      logger().info("Compute properties workflow already started.");
-    } else {
-      logger().error({ err: e }, "Failed to bootstrap worker.");
-
-      if (config().bootstrapSafe) {
-        throw e;
-      }
-    }
-  }
 }
 
 async function insertDefaultEvents({ workspaceId }: { workspaceId: string }) {
@@ -387,18 +415,25 @@ function handleErrorFactory(message: string) {
 export default async function bootstrap({
   workspaceName,
   workspaceDomain,
+  workspaceType,
 }: {
   workspaceName: string;
+  workspaceType: WorkspaceType;
   workspaceDomain?: string;
 }): Promise<{ workspaceId: string }> {
   await prismaMigrate();
   const workspace = await bootstrapPostgres({
     workspaceName,
     workspaceDomain,
+    workspaceType,
   });
   if (workspace.isErr()) {
     logger().error({ err: workspace.error }, "Failed to bootstrap workspace.");
     throw new Error("Failed to bootstrap workspace.");
+  }
+  if (workspaceType === WorkspaceType.Parent) {
+    logger().info("Parent workspace created, skipping remaining bootstrap steps.");
+    return { workspaceId: workspace.value.id };
   }
   const workspaceId = workspace.value.id;
 
@@ -425,7 +460,7 @@ export default async function bootstrap({
   }
 
   if (config().bootstrapWorker) {
-    await bootstrapWorker({ workspaceId });
+    await startComputePropertiesWorkflow({ workspaceId });
     await startGlobalCron();
   }
   return { workspaceId };
@@ -434,11 +469,13 @@ export default async function bootstrap({
 export interface BootstrapWithDefaultsParams {
   workspaceName?: string;
   workspaceDomain?: string;
+  workspaceType?: WorkspaceType;
 }
 
 export function getBootstrapDefaultParams({
   workspaceName,
   workspaceDomain,
+  workspaceType,
 }: BootstrapWithDefaultsParams): Parameters<typeof bootstrap>[0] {
   const defaultWorkspaceName =
     config().nodeEnv === NodeEnvEnum.Development ? "Default" : null;
@@ -451,6 +488,7 @@ export function getBootstrapDefaultParams({
   return {
     workspaceName: workspaceNameWithDefault,
     workspaceDomain,
+    workspaceType: workspaceType ?? WorkspaceType.Root,
   };
 }
 
